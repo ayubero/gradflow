@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use ndarray::ArrayD;
+use ndarray::{ArrayD, Ix2};
 
 #[derive(Clone)]
 pub struct Tensor {
@@ -63,8 +63,11 @@ pub fn add(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tenso
 
 pub fn matmul(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
     // Forward pass
-    let result_data = a.borrow().data.dot(&b.borrow().data); // ndarray's dot product
-    let result = Rc::new(RefCell::new(Tensor::new(result_data, true)));
+    //let result_data = a.borrow().data.clone().dot(&b.borrow().data.clone()); // ndarray's dot product
+    let a_data = a.borrow().data.clone().into_dimensionality::<Ix2>().expect("a is not 2D");
+    let b_data = b.borrow().data.clone().into_dimensionality::<Ix2>().expect("b is not 2D");
+    let result_data = a_data.dot(&b_data);
+    let result = Rc::new(RefCell::new(Tensor::new(result_data.into_dyn(), true)));
 
     // Backward pass
     if a.borrow().requires_grad || b.borrow().requires_grad {
@@ -82,20 +85,36 @@ pub fn matmul(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Te
                 let shape = a_clone.borrow().data.raw_dim();
                 a_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
             }
-            let grad_a = out.grad.as_ref().unwrap().dot(
-                &b_clone.borrow().data.t().to_owned()
-            );
-            *a_clone.borrow_mut().grad.as_mut().unwrap() += &grad_a;
+            let out_grad_2d = out.grad.as_ref().unwrap()
+                .view()
+                .into_dimensionality::<Ix2>()
+                .expect("out.grad not 2D");
+            let binding = b_clone.borrow();
+            let b_data_2d = binding.data
+                .view()
+                .into_dimensionality::<Ix2>()
+                .expect("b not 2D");
+
+            let grad_a = out_grad_2d.dot(&b_data_2d.t());
+            *a_clone.borrow_mut().grad.as_mut().unwrap() += &grad_a.into_dyn();
 
             // Gradient for b: a^T * out.grad
             if b_clone.borrow().grad.is_none() {
                 let shape = b_clone.borrow().data.raw_dim();
                 b_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
             }
-            let grad_b = a_clone.borrow().data.t().to_owned().dot(
-                out.grad.as_ref().unwrap()
-            );
-            *b_clone.borrow_mut().grad.as_mut().unwrap() += &grad_b;
+            let binding = a_clone.borrow();
+            let a_data_2d = binding.data
+                .view()
+                .into_dimensionality::<Ix2>()
+                .expect("a not 2D");
+            let out_grad_2d = out.grad.as_ref().unwrap()
+                .view()
+                .into_dimensionality::<Ix2>()
+                .expect("out.grad not 2D");
+
+            let grad_b = a_data_2d.t().dot(&out_grad_2d);
+            *b_clone.borrow_mut().grad.as_mut().unwrap() += &grad_b.into_dyn();
         })));
     }
 
