@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use ndarray::ArrayD;
 
-use crate::tensor::{add, matmul, Tensor};
+use crate::tensor::{add, matmul, relu, sigmoid, Tensor};
 
 pub trait Module {
     fn forward(&self, input: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>>;
@@ -12,6 +12,13 @@ pub trait Module {
 // ====================
 // Sequential Container
 // ====================
+
+#[macro_export]
+macro_rules! modules { // Macro to avoid writing Box for all the Modules in Sequential
+    ($($module:expr),* $(,)?) => {
+        vec![$(Box::new($module) as Box<dyn Module>),*]
+    };
+}
 
 pub struct Sequential {
     pub layers: Vec<Box<dyn Module>>,
@@ -69,3 +76,46 @@ impl Module for Linear {
     }
 }
 
+// ====
+// ReLU
+// ====
+
+pub struct ReLU {}
+
+impl ReLU {
+    pub fn new() -> Self {
+        ReLU {  }
+    }
+}
+
+impl Module for ReLU {
+    fn forward(&self, x: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+        relu(&x)
+    }
+
+    fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {
+        vec![]
+    }
+}
+
+// ====
+// Sigmoid
+// ====
+
+pub struct Sigmoid {}
+
+impl Sigmoid {
+    pub fn new() -> Self {
+        Sigmoid {  }
+    }
+}
+
+impl Module for Sigmoid {
+    fn forward(&self, x: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+        sigmoid(&x)
+    }
+
+    fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {
+        vec![]
+    }
+}

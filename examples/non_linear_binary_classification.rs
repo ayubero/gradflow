@@ -1,11 +1,19 @@
-use plotters::prelude::*;
-use plotters::style::RGBColor;
+use ndarray::{Array2, ArrayD};
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_distr::Distribution;
 use statrs::distribution::MultivariateNormal;
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::rc::Rc;
+use plotters::prelude::*;
+use plotters::style::RGBColor;
+
+use gradflow::modules;
+use gradflow::nn::{Linear, Module, ReLU, Sequential, Sigmoid};
+use gradflow::optimizer::SGD;
+use gradflow::tensor::{bce_loss, Tensor};
 
 const RED: RGBColor = RGBColor(231, 0, 11);
 const BLUE: RGBColor = RGBColor(21, 93, 252);
@@ -128,6 +136,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .draw()?;
 
     println!("Wrote scatter plot to {}", filename);
+
+    // Separate features and labels
+    let n_samples = points.len();
+    let mut x_data = Array2::<f64>::zeros((n_samples, 2)); // x, y
+    let mut y_data = Array2::<f64>::zeros((n_samples, 1)); // label
+
+    for (i, (x, y, label)) in points.iter().enumerate() {
+        x_data[[i, 0]] = *x;
+        x_data[[i, 1]] = *y;
+        y_data[[i, 0]] = *label as f64;
+    }
+
+    // Training
+    let model = Sequential::new(modules![
+        Linear::new(2, 16),
+        ReLU::new(),
+        Linear::new(16, 8),
+        ReLU::new(),
+        Linear::new(8, 1),
+        Sigmoid::new(),
+    ]);
+    let optimizer = SGD { params: model.parameters(), lr: 0.01 };
+
+    for i in 0..100 {
+        // Get data
+        let x = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![2], 1.0), false)));
+        let y_true = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![1], 2.0), false)));
+
+        // Zero all the gradients
+        optimizer.zero_grad();
+
+        // Make predictions
+        let y_pred = model.forward(x);
+
+        // Compute loss and its gradients
+        let loss = bce_loss(&y_pred, &y_true); // TO-DO: Fake loss
+        loss.borrow_mut().backward();
+
+        // Adjust learning weights
+        optimizer.step();
+
+        // Logging
+        println!("Iteration {:?} | Loss: {:?}", i, loss.borrow().data);
+    }
 
     Ok(())
 }

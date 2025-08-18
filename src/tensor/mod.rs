@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use ndarray::{ArrayD, Ix2};
+use ndarray::{ArrayD, Ix1, Ix2};
+use std::f64::EPSILON; // To avoid log(0)
 
 #[derive(Clone)]
 pub struct Tensor {
@@ -28,6 +29,7 @@ impl Tensor {
     }
 }
 
+// Addition
 pub fn add(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
     let result_data = &a.borrow().data + &b.borrow().data;
     let result = Rc::new(RefCell::new(Tensor::new(result_data, true)));
@@ -35,7 +37,6 @@ pub fn add(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tenso
     if a.borrow().requires_grad || b.borrow().requires_grad {
         let a_clone = Rc::clone(a);
         let b_clone = Rc::clone(b);
-        let result_clone = Rc::clone(&result);
 
         result.borrow_mut().grad_fn = Some(Rc::new(RefCell::new(move |out: &mut Tensor| {
             if out.grad.is_none() {
@@ -61,6 +62,7 @@ pub fn add(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tenso
     result
 }
 
+// Multiplication
 pub fn matmul(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
     // Forward pass
     //let result_data = a.borrow().data.clone().dot(&b.borrow().data.clone()); // ndarray's dot product
@@ -73,7 +75,6 @@ pub fn matmul(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Te
     if a.borrow().requires_grad || b.borrow().requires_grad {
         let a_clone = Rc::clone(a);
         let b_clone = Rc::clone(b);
-        let result_clone = Rc::clone(&result);
 
         result.borrow_mut().grad_fn = Some(Rc::new(RefCell::new(move |out: &mut Tensor| {
             if out.grad.is_none() {
@@ -115,6 +116,95 @@ pub fn matmul(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Te
 
             let grad_b = a_data_2d.t().dot(&out_grad_2d);
             *b_clone.borrow_mut().grad.as_mut().unwrap() += &grad_b.into_dyn();
+        })));
+    }
+
+    result
+}
+
+// ReLU
+pub fn relu(x: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+    let x_data = x.borrow().data.clone();
+    let result_data = x_data.mapv(|v| v.max(0.0));
+    let result = Rc::new(RefCell::new(Tensor::new(result_data, true)));
+
+    if x.borrow().requires_grad {
+        let x_clone = Rc::clone(x);
+
+        result.borrow_mut().grad_fn = Some(Rc::new(RefCell::new(move |out: &mut Tensor| {
+            if out.grad.is_none() {
+                out.grad = Some(ArrayD::zeros(out.data.raw_dim()));
+            }
+            if x_clone.borrow().grad.is_none() {
+                let shape = x_clone.borrow().data.raw_dim();
+                x_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
+            }
+
+            let grad_mask = x_clone.borrow().data.mapv(|v| if v > 0.0 { 1.0 } else { 0.0 });
+            *x_clone.borrow_mut().grad.as_mut().unwrap() += &(grad_mask * out.grad.as_ref().unwrap());
+        })));
+    }
+
+    result
+}
+
+// Sigmoid
+pub fn sigmoid(x: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+    let x_data = x.borrow().data.clone();
+    let result_data = x_data.mapv(|v| 1.0 / (1.0 + (-v).exp()));
+    let result = Rc::new(RefCell::new(Tensor::new(result_data.clone(), true)));
+
+    if x.borrow().requires_grad {
+        let x_clone = Rc::clone(x);
+        let result_clone = result_data; // store the forward result for backward
+
+        result.borrow_mut().grad_fn = Some(Rc::new(RefCell::new(move |out: &mut Tensor| {
+            if out.grad.is_none() {
+                out.grad = Some(ArrayD::zeros(out.data.raw_dim()));
+            }
+            if x_clone.borrow().grad.is_none() {
+                let shape = x_clone.borrow().data.raw_dim();
+                x_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
+            }
+
+            let grad = &result_clone * &(1.0 - &result_clone) * out.grad.as_ref().unwrap();
+            *x_clone.borrow_mut().grad.as_mut().unwrap() += &grad;
+        })));
+    }
+
+    result
+}
+
+// BCE loss function
+pub fn bce_loss(pred: &Rc<RefCell<Tensor>>, target: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+    let y_pred = pred.borrow().data.clone().into_dimensionality::<Ix1>().expect("y_pred is not 1D");
+    let y_target = target.borrow().data.clone().into_dimensionality::<Ix1>().expect("y_pred is not 1D");
+
+    // compute BCE loss: - (y*log(p) + (1-y)*log(1-p))
+    let loss_data = -(y_target.dot(&y_pred.mapv(|v| (v + EPSILON).ln())) +
+        &(1.0 - y_target) * &y_pred.mapv(|v| (1.0 - v + EPSILON).ln()));
+
+    let mean_loss = loss_data.mean().unwrap();
+    let result = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![1], mean_loss), true)));
+
+    if pred.borrow().requires_grad {
+        let pred_clone = Rc::clone(pred);
+        let target_clone = Rc::clone(target);
+        
+        result.borrow_mut().grad_fn = Some(Rc::new(RefCell::new(move |_: &mut Tensor| {
+            let y_pred = pred_clone.borrow().data.clone().into_dimensionality::<Ix1>().expect("y_pred is not 1D");
+            let y_target = target_clone.borrow().data.clone().into_dimensionality::<Ix1>().expect("y_pred is not 1D");
+            
+            if pred_clone.borrow().grad.is_none() {
+                let shape = pred_clone.borrow().data.raw_dim();
+                pred_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
+            }
+
+            // Compute grad
+            let grad = (y_pred - &y_target) / (y_target.len() as f64);
+            
+            // Accumulate gradients in pred
+            *pred_clone.borrow_mut().grad.as_mut().unwrap() += &grad;
         })));
     }
 

@@ -9,6 +9,8 @@ use tensor::{add, Tensor};
 use nn::{Linear, Module};
 use optimizer::SGD;
 
+use crate::tensor::bce_loss;
+
 fn train() {
     let model = Linear::new(2, 1);
     let optimizer = SGD { params: model.parameters(), lr: 0.01 };
@@ -25,7 +27,7 @@ fn train() {
         let y_pred = model.forward(x);
 
         // Compute loss and its gradients
-        let loss = add(&y_pred, &y_true); // TO-DO: Fake loss
+        let loss = bce_loss(&y_pred, &y_true);
         loss.borrow_mut().backward();
 
         // Adjust learning weights
