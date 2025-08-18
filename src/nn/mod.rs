@@ -67,7 +67,7 @@ impl Linear {
 
 impl Module for Linear {
     fn forward(&self, x: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
-        let wx = matmul(&self.weights, &x);
+        let wx = matmul(&x, &self.weights);
         add(&wx, &self.bias)
     }
 

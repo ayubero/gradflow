@@ -1,4 +1,4 @@
-use ndarray::{Array2, ArrayD};
+use ndarray::{Array2, Axis};
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_distr::Distribution;
@@ -11,6 +11,7 @@ use plotters::prelude::*;
 use plotters::style::RGBColor;
 
 use gradflow::modules;
+use gradflow::data::DataLoader;
 use gradflow::nn::{Linear, Module, ReLU, Sequential, Sigmoid};
 use gradflow::optimizer::SGD;
 use gradflow::tensor::{bce_loss, Tensor};
@@ -148,6 +149,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         y_data[[i, 0]] = *label as f64;
     }
 
+    let mut dataloader = DataLoader::new(&x_data, &y_data, 32, 42); // Batch size 32
+
     // Training
     let model = Sequential::new(modules![
         Linear::new(2, 16),
@@ -157,29 +160,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Linear::new(8, 1),
         Sigmoid::new(),
     ]);
+    /*let model = Sequential::new(modules![
+        Linear::new(2, 1),
+        Sigmoid::new(),
+    ]);*/
     let optimizer = SGD { params: model.parameters(), lr: 0.01 };
 
-    for i in 0..100 {
-        // Get data
-        let x = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![2], 1.0), false)));
-        let y_true = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![1], 2.0), false)));
+    for epoch in 0..100 {
+        for (x_batch, y_batch) in dataloader.iter() {
+            // Just one item from the batch (until support for batches is implemented)
+            let x_item = x_batch.row(0).to_owned().insert_axis(Axis(0)).into_dyn();
+            let y_item = y_batch.row(0).to_owned().insert_axis(Axis(0)).into_dyn();
+            let x_tensor = Rc::new(RefCell::new(Tensor::new(x_item, false)));
+            let y_tensor = Rc::new(RefCell::new(Tensor::new(y_item, false)));
 
-        // Zero all the gradients
-        optimizer.zero_grad();
+            // Zero all the gradients
+            optimizer.zero_grad();
 
-        // Make predictions
-        let y_pred = model.forward(x);
+            // Make predictions
+            let y_pred = model.forward(x_tensor);
 
-        // Compute loss and its gradients
-        let loss = bce_loss(&y_pred, &y_true); // TO-DO: Fake loss
-        loss.borrow_mut().backward();
+            // Compute loss and its gradients
+            let loss = bce_loss(&y_pred, &y_tensor); // TO-DO: Fake loss
+            loss.borrow_mut().backward();
 
-        // Adjust learning weights
-        optimizer.step();
+            // Adjust learning weights
+            optimizer.step();
 
-        // Logging
-        println!("Iteration {:?} | Loss: {:?}", i, loss.borrow().data);
+            // Logging
+            println!("Epoch {:?} | Loss: {:?}", epoch, loss.borrow().data[[0]]);
+        }
     }
+
+    println!("Finished!");
 
     Ok(())
 }

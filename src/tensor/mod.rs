@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use ndarray::{ArrayD, Ix1, Ix2};
+use ndarray::{ArrayD, Axis, Ix2};
 use std::f64::EPSILON; // To avoid log(0)
 
 #[derive(Clone)]
@@ -31,9 +31,13 @@ impl Tensor {
 
 // Addition
 pub fn add(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
-    let result_data = &a.borrow().data + &b.borrow().data;
-    let result = Rc::new(RefCell::new(Tensor::new(result_data, true)));
-
+    let a_data = a.borrow().data.clone();
+    let b_data = b.borrow().data.clone();
+    let b_broadcasted = b_data.insert_axis(Axis(0)); // [batch_size, out_features]
+    let b_broadcasted = b_broadcasted.broadcast(a_data.shape()).unwrap();
+    let result_data = a_data + b_broadcasted;
+    let result = Rc::new(RefCell::new(Tensor::new(result_data.into_dyn(), true)));
+    
     if a.borrow().requires_grad || b.borrow().requires_grad {
         let a_clone = Rc::clone(a);
         let b_clone = Rc::clone(b);
@@ -65,10 +69,9 @@ pub fn add(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tenso
 // Multiplication
 pub fn matmul(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
     // Forward pass
-    //let result_data = a.borrow().data.clone().dot(&b.borrow().data.clone()); // ndarray's dot product
     let a_data = a.borrow().data.clone().into_dimensionality::<Ix2>().expect("a is not 2D");
     let b_data = b.borrow().data.clone().into_dimensionality::<Ix2>().expect("b is not 2D");
-    let result_data = a_data.dot(&b_data);
+    let result_data = a_data.dot(&b_data.t());
     let result = Rc::new(RefCell::new(Tensor::new(result_data.into_dyn(), true)));
 
     // Backward pass
@@ -177,8 +180,8 @@ pub fn sigmoid(x: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
 
 // BCE loss function
 pub fn bce_loss(pred: &Rc<RefCell<Tensor>>, target: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
-    let y_pred = pred.borrow().data.clone().into_dimensionality::<Ix1>().expect("y_pred is not 1D");
-    let y_target = target.borrow().data.clone().into_dimensionality::<Ix1>().expect("y_pred is not 1D");
+    let y_pred = pred.borrow().data.clone().into_dimensionality::<Ix2>().expect("y_pred is not 2D");
+    let y_target = target.borrow().data.clone().into_dimensionality::<Ix2>().expect("y_target is not 2D");
 
     // compute BCE loss: - (y*log(p) + (1-y)*log(1-p))
     let loss_data = -(y_target.dot(&y_pred.mapv(|v| (v + EPSILON).ln())) +
@@ -192,8 +195,8 @@ pub fn bce_loss(pred: &Rc<RefCell<Tensor>>, target: &Rc<RefCell<Tensor>>) -> Rc<
         let target_clone = Rc::clone(target);
         
         result.borrow_mut().grad_fn = Some(Rc::new(RefCell::new(move |_: &mut Tensor| {
-            let y_pred = pred_clone.borrow().data.clone().into_dimensionality::<Ix1>().expect("y_pred is not 1D");
-            let y_target = target_clone.borrow().data.clone().into_dimensionality::<Ix1>().expect("y_pred is not 1D");
+            let y_pred = pred_clone.borrow().data.clone().into_dimensionality::<Ix2>().expect("y_pred is not 1D");
+            let y_target = target_clone.borrow().data.clone().into_dimensionality::<Ix2>().expect("y_pred is not 1D");
             
             if pred_clone.borrow().grad.is_none() {
                 let shape = pred_clone.borrow().data.raw_dim();
