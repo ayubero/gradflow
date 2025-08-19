@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use ndarray::ArrayD;
 
-use crate::tensor::{add, matmul, relu, sigmoid, Tensor};
+use crate::tensor::{add, matmul, relu, sigmoid, tanh, Tensor};
 
 pub trait Module {
     fn forward(&self, input: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>>;
@@ -113,6 +113,28 @@ impl Sigmoid {
 impl Module for Sigmoid {
     fn forward(&self, x: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
         sigmoid(&x)
+    }
+
+    fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {
+        vec![]
+    }
+}
+
+// ====
+// Tanh
+// ====
+
+pub struct Tanh {}
+
+impl Tanh {
+    pub fn new() -> Self {
+        Tanh {  }
+    }
+}
+
+impl Module for Tanh {
+    fn forward(&self, x: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+        tanh(&x)
     }
 
     fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {

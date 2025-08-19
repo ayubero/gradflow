@@ -240,6 +240,35 @@ pub fn sigmoid(x: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
     result
 }
 
+// Tanh
+pub fn tanh(x: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+    let x_data = x.borrow().data.clone();
+    let result_data = x_data.mapv(|v| v.tanh());
+    let result = Rc::new(RefCell::new(Tensor::new(result_data.clone(), true)));
+    result.borrow_mut().parents = vec![Rc::clone(&x)];
+
+    if x.borrow().requires_grad {
+        let x_clone = Rc::clone(x);
+        let result_clone = result_data; // Store forward tanh(x)
+
+        result.borrow_mut().grad_fn = Some(Rc::new(RefCell::new(move |out: &mut Tensor| {
+            if out.grad.is_none() {
+                out.grad = Some(ArrayD::zeros(out.data.raw_dim()));
+            }
+            if x_clone.borrow().grad.is_none() {
+                let shape = x_clone.borrow().data.raw_dim();
+                x_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
+            }
+
+            // d/dx tanh(x) = 1 - tanh(x)^2
+            let grad = (1.0 - &result_clone.mapv(|v| v * v)) * out.grad.as_ref().unwrap();
+            *x_clone.borrow_mut().grad.as_mut().unwrap() += &grad;
+        })));
+    }
+
+    result
+}
+
 // BCE loss function
 pub fn bce_loss(pred: &Rc<RefCell<Tensor>>, target: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
     let y_pred = pred.borrow().data.clone().into_dimensionality::<Ix2>().expect("y_pred is not 2D");

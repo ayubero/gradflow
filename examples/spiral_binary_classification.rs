@@ -13,7 +13,7 @@ use plotters::style::RGBColor;
 
 use gradflow::modules;
 use gradflow::data::{generate_spiral, train_test_split, DataLoader};
-use gradflow::nn::{Linear, Module, ReLU, Sequential, Sigmoid};
+use gradflow::nn::{Linear, Module, ReLU, Sequential, Sigmoid, Tanh};
 use gradflow::optimizer::{Adam, ExponentialDecay, LinearDecay, SGD};
 use gradflow::tensor::{bce_loss, Tensor};
 
@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Optionally shuffle the dataset
     points.shuffle(&mut rng);*/
 
-    let n_per_class = 400;
+    let n_per_class = 200;
     let seed = 42;
     let noise = 0.1;
 
@@ -147,50 +147,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Separate features and labels
     let n_samples = points.len();
-    let mut x_data = Array2::<f64>::zeros((n_samples, 2)); // x, y
+    let mut x_data = Array2::<f64>::zeros((n_samples, 5)); // x, y, x^2, y^2, x*y
     let mut y_data = Array2::<f64>::zeros((n_samples, 1)); // label
 
     for (i, (x, y, label)) in points.iter().enumerate() {
         x_data[[i, 0]] = *x;
         x_data[[i, 1]] = *y;
+        x_data[[i, 2]] = x.powi(2);
+        x_data[[i, 3]] = y.powi(2);
+        x_data[[i, 4]] = x*y;
+
         y_data[[i, 0]] = *label as f64;
     }
 
+    let batch_size = 10;
+    let epochs = 2000;
+    let seed = 42;
+
     let (x_train, x_test, y_train, y_test) = train_test_split(&x_data, &y_data, 0.2);
-    let mut train_dataloader = DataLoader::new(&x_train, &y_train, 32, 42);
-    let mut test_dataloader = DataLoader::new(&x_test, &y_test, 32, 42);
+    let mut train_dataloader = DataLoader::new(&x_train, &y_train, batch_size, seed);
+    let mut test_dataloader = DataLoader::new(&x_test, &y_test, batch_size, seed);
 
     // Training
-    /*let model = Sequential::new(modules![
-        Linear::new(2, 16),
+    let model = Sequential::new(modules![
+        Linear::new(5, 16),
         ReLU::new(),
         Linear::new(16, 8),
         ReLU::new(),
         Linear::new(8, 1),
         Sigmoid::new(),
-    ]);*/
-    let model = Sequential::new(modules![
-        Linear::new(2, 32),
-        ReLU::new(),
-        Linear::new(32, 32),
-        ReLU::new(),
-        Linear::new(32, 16),
-        ReLU::new(),
-        Linear::new(16, 1),
-        Sigmoid::new(),
     ]);
-
-    let epochs = 500;
     
-    //let optimizer = SGD { params: model.parameters(), lr: 0.5 };
-    /*let scheduler = Box::new(LinearDecay { initial_lr: 1.5, total_steps: epochs });
-    let mut optimizer = SGD {
-        params: model.parameters(), 
-        lr: 0.01, 
-        scheduler: Some(scheduler), 
-        step_count: 0
-    };*/
-    let mut optimizer = Adam::new(model.parameters(), 0.001);
+    let mut optimizer = Adam::new(model.parameters(), 0.003);
 
     for epoch in 0..epochs {
         let mut epoch_losses: Vec<f64> = vec![];
@@ -218,7 +206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Inference
     let prediction = model.forward(
-        Rc::new(RefCell::new(Tensor::new(Array2::from_elem((1, 2), 1.0).into_dyn(), false)))
+        Rc::new(RefCell::new(Tensor::new(Array2::from_elem((1, 5), 1.0).into_dyn(), false)))
     );
     println!("Probality of belonging to class 1: {:?}", prediction.borrow().data);
     
@@ -263,9 +251,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             (0..resolution).map(move |j| {
                 let x = x_min - pad_x + i as f64 * x_step;
                 let y = y_min - pad_y + j as f64 * y_step;
+                let x_squared = x.powi(2);
+                let y_squared = y.powi(2);
+                let x_by_y = x*y;
 
                 // Predict
-                let tensor_data = Array2::from_shape_vec((1, 2), vec![x, y]).unwrap();
+                let tensor_data = Array2::from_shape_vec(
+                    (1, 5), vec![x, y, x_squared, y_squared, x_by_y]
+                ).unwrap();
                 let input = Rc::new(RefCell::new(
                     Tensor::new(tensor_data.into_dyn(), false)
                 ));
