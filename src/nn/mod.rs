@@ -1,12 +1,14 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{any::Any, cell::RefCell, rc::Rc};
 
 use ndarray::ArrayD;
 
-use crate::tensor::{add, matmul, relu, sigmoid, tanh, Tensor};
+use crate::{init::{InitType, Initializable}, tensor::{add, matmul, relu, sigmoid, tanh, Tensor}};
 
 pub trait Module {
     fn forward(&self, input: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>>;
     fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>>;
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 // ====================
@@ -28,6 +30,14 @@ impl Sequential {
     pub fn new(layers: Vec<Box<dyn Module>>) -> Self {
         Sequential { layers }
     }
+
+    pub fn apply_init(&mut self, init: InitType) {
+        for layer in self.layers.iter_mut() {
+            if let Some(l) = layer.as_any_mut().downcast_mut::<Linear>() {
+                l.reset_parameters(&init);
+            }
+        }
+    }
 }
 
 impl Module for Sequential {
@@ -44,6 +54,14 @@ impl Module for Sequential {
             params.extend(layer.parameters());
         }
         params
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -74,6 +92,14 @@ impl Module for Linear {
     fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {
         vec![Rc::clone(&self.weights), Rc::clone(&self.bias)]
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 // ====
@@ -95,6 +121,14 @@ impl Module for ReLU {
 
     fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {
         vec![]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -118,6 +152,14 @@ impl Module for Sigmoid {
     fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {
         vec![]
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
 }
 
 // ====
@@ -139,5 +181,13 @@ impl Module for Tanh {
 
     fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {
         vec![]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }

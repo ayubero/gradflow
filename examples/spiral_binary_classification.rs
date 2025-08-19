@@ -1,3 +1,4 @@
+use gradflow::init::InitType;
 use ndarray::Array2;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
@@ -160,8 +161,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         y_data[[i, 0]] = *label as f64;
     }
 
-    let batch_size = 10;
-    let epochs = 2000;
+    let batch_size = 32;
+    let epochs = 300;
     let seed = 42;
 
     let (x_train, x_test, y_train, y_test) = train_test_split(&x_data, &y_data, 0.2);
@@ -169,7 +170,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut test_dataloader = DataLoader::new(&x_test, &y_test, batch_size, seed);
 
     // Training
-    let model = Sequential::new(modules![
+    let mut model = Sequential::new(modules![
         Linear::new(5, 16),
         ReLU::new(),
         Linear::new(16, 8),
@@ -177,6 +178,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Linear::new(8, 1),
         Sigmoid::new(),
     ]);
+    model.apply_init(InitType::KaimingNormal);
     
     let mut optimizer = Adam::new(model.parameters(), 0.003);
 
