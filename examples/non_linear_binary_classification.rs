@@ -1,4 +1,4 @@
-use ndarray::{Array2, Axis};
+use ndarray::{Array2, ArrayD, Axis};
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_distr::Distribution;
@@ -86,7 +86,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut chart = ChartBuilder::on(&root)
         .margin(20)
-        .caption("2-class logistic-like dataset (2 features)", ("Ubuntu", 20).into_font())
+        .caption("2-class dataset (2 features)", ("Ubuntu", 20).into_font())
         .x_label_area_size(40)
         .y_label_area_size(40)
         .build_cartesian_2d(
@@ -188,7 +188,109 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Epoch {:?} | Loss: {:?}", epoch, epoch_losses.mean());
     }
 
-    println!("Finished!");
+    // Inference
+    let prediction = model.forward(
+        Rc::new(RefCell::new(Tensor::new(Array2::from_elem((1, 2), 1.0).into_dyn(), false)))
+    );
+    println!("Probality of belonging to class 1: {:?}", prediction.borrow().data);
+    
+    // Plot decision regions
+    let filename = "data/decision_regions.svg";
+    let root = SVGBackend::new(filename, (800, 600)).into_drawing_area();
+    root.fill(&WHITE)?;
+
+    let mut chart = ChartBuilder::on(&root)
+        .margin(20)
+        .caption("2-class dataset (2 features)", ("Ubuntu", 20).into_font())
+        .x_label_area_size(40)
+        .y_label_area_size(40)
+        .build_cartesian_2d(
+            (x_min - pad_x)..(x_max + pad_x),
+            (y_min - pad_y)..(y_max + pad_y),
+        )?;
+
+    //chart.configure_mesh().draw()?;
+    chart
+        .configure_mesh()
+        .x_labels(10)
+        .y_labels(10)
+        .x_label_formatter(&|x| format!("{:.1}", x))
+        .y_label_formatter(&|y| format!("{:.1}", y))
+        .x_label_style(("Ubuntu", 15).into_font())
+        .y_label_style(("Ubuntu", 15).into_font())
+        .axis_desc_style(("Ubuntu", 20).into_font())
+        .light_line_style(ShapeStyle::from(&WHITE).stroke_width(0)) // Hide secondary lines
+        .draw()?;
+
+    // Grid to plot decision regions
+    let resolution = 200; // Grid resolution (higher = smoother, but slower)
+    let x_step = (x_max + pad_x - (x_min - pad_x)) / resolution as f64;
+    let y_step = (y_max + pad_y - (y_min - pad_y)) / resolution as f64;
+
+    let model_rc = Rc::new(RefCell::new(model));
+
+    chart.draw_series(
+        (0..resolution).flat_map(|i| {
+            let model_rc = model_rc.clone(); // Clone Rc for each closure
+            (0..resolution).map(move |j| {
+                let x = x_min - pad_x + i as f64 * x_step;
+                let y = y_min - pad_y + j as f64 * y_step;
+
+                // Predict
+                let tensor_data = Array2::from_shape_vec((1, 2), vec![x, y]).unwrap();
+                let input = Rc::new(RefCell::new(
+                    Tensor::new(tensor_data.into_dyn(), false)
+                ));
+                let prediction = model_rc.borrow().forward(input.clone());
+                let probability_value = prediction.borrow().data[[0, 0]];
+                let class = if probability_value >= 0.5 { 1 } else { 0 };
+
+                let color = if class == 0 {
+                    BLUE.mix(0.2) // semi-transparent blue
+                } else {
+                    RED.mix(0.2)  // semi-transparent red
+                };
+
+                // Draw small rectangle cell
+                Rectangle::new(
+                    [(x, y), (x + x_step, y + y_step)],
+                    color.filled(),
+                )
+            })
+        })
+    )?;
+
+    // Draw points: class 0 blue circles, class 1 red triangles
+    let class0 = points.iter().filter(|(_, _, l)| *l == 0).map(|(x, y, _)| (*x, *y));
+    let class1 = points.iter().filter(|(_, _, l)| *l == 1).map(|(x, y, _)| (*x, *y));
+
+    chart
+        .draw_series(
+            class0.map(|(x, y)| Circle::new((x, y), 3, ShapeStyle::from(&BLUE).filled())),
+        )?
+        .label("Class 0")
+        .legend(|(x, y)| Circle::new((x, y), 3, ShapeStyle::from(&BLUE).filled()));
+
+    chart
+        .draw_series(
+            class1.map(|(x, y)| Circle::new((x, y), 3, ShapeStyle::from(&RED).filled())),
+        )?
+        .label("Class 1")
+        .legend(|(x, y)| Circle::new((x, y), 3, ShapeStyle::from(&RED).filled()));
+
+    // Add legend
+    chart
+        .draw_series([
+            Rectangle::new([(x_max - pad_x*0.9, y_max - pad_y*0.9), (x_max - pad_x*0.6, y_max - pad_y*0.8)], &WHITE.mix(0.0)) // invisible box to anchor
+        ])?;
+    chart
+        .configure_series_labels()
+        .background_style(&WHITE.mix(0.8))
+        .border_style(&BLACK)
+        .label_font(("Ubuntu", 15).into_font())
+        .draw()?;
+
+    println!("Wrote scatter plot to {}", filename);
 
     Ok(())
 }

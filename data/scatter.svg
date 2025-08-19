@@ -1,7 +1,7 @@
 <svg width="800" height="600" viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg">
 <rect x="0" y="0" width="800" height="600" opacity="1" fill="#FFFFFF" stroke="none"/>
 <text x="400" y="25" dy="0.76em" text-anchor="middle" font-family="Ubuntu" font-size="16.129032258064516" opacity="1" fill="#000000">
-2-class logistic-like dataset (2 features)
+2-class dataset (2 features)
 </text>
 <line opacity="1" stroke="#FFFFFF" stroke-width="0" x1="63" y1="539" x2="63" y2="46"/>
 <line opacity="1" stroke="#FFFFFF" stroke-width="0" x1="74" y1="539" x2="74" y2="46"/>
