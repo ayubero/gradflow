@@ -1,7 +1,7 @@
 use ndarray::Array2;
 use rand::seq::SliceRandom;
 use rand::rngs::StdRng;
-use rand::SeedableRng;
+use rand::{thread_rng, SeedableRng};
 use std::iter::Iterator;
 
 pub struct DataLoader<'a> {
@@ -67,4 +67,39 @@ impl<'a> Iterator for DataLoaderIter<'a> {
         self.current = end;
         Some((x_batch, y_batch))
     }
+}
+
+/// Splits dataset into train and test sets
+pub fn train_test_split(
+    x_data: &Array2<f64>,
+    y_data: &Array2<f64>,
+    test_ratio: f64,
+) -> (Array2<f64>, Array2<f64>, Array2<f64>, Array2<f64>) {
+    let n_samples = x_data.nrows();
+    let mut indices: Vec<usize> = (0..n_samples).collect();
+    let mut rng = thread_rng();
+    indices.shuffle(&mut rng);
+
+    let test_size = (n_samples as f64 * test_ratio).round() as usize;
+
+    let test_indices = &indices[..test_size];
+    let train_indices = &indices[test_size..];
+
+    let x_train = Array2::from_shape_fn((train_indices.len(), x_data.ncols()), |(i, j)| {
+        x_data[[train_indices[i], j]]
+    });
+
+    let x_test = Array2::from_shape_fn((test_indices.len(), x_data.ncols()), |(i, j)| {
+        x_data[[test_indices[i], j]]
+    });
+
+    let y_train = Array2::from_shape_fn((train_indices.len(), y_data.ncols()), |(i, j)| {
+        y_data[[train_indices[i], j]]
+    });
+
+    let y_test = Array2::from_shape_fn((test_indices.len(), y_data.ncols()), |(i, j)| {
+        y_data[[test_indices[i], j]]
+    });
+
+    (x_train, x_test, y_train, y_test)
 }

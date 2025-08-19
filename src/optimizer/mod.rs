@@ -21,7 +21,7 @@ impl SGD {
                     grad
                 } else if param_mut.data.shape()[0] == 1 {
                     // Average along the batch dimension
-                    grad.mean_axis(ndarray::Axis(0)).unwrap().insert_axis(ndarray::Axis(0))
+                    grad.mean_axis(Axis(0)).unwrap().insert_axis(Axis(0))
                 } else {
                     panic!(
                         "Gradient shape {:?} does not match parameter shape {:?}",

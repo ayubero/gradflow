@@ -1,4 +1,4 @@
-use ndarray::{Array2, ArrayD, Axis};
+use ndarray::Array2;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_distr::Distribution;
@@ -12,7 +12,7 @@ use plotters::prelude::*;
 use plotters::style::RGBColor;
 
 use gradflow::modules;
-use gradflow::data::DataLoader;
+use gradflow::data::{train_test_split, DataLoader};
 use gradflow::nn::{Linear, Module, ReLU, Sequential, Sigmoid};
 use gradflow::optimizer::SGD;
 use gradflow::tensor::{bce_loss, Tensor};
@@ -150,7 +150,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         y_data[[i, 0]] = *label as f64;
     }
 
-    let mut dataloader = DataLoader::new(&x_data, &y_data, 32, 42); // Batch size 32
+    let (x_train, x_test, y_train, y_test) = train_test_split(&x_data, &y_data, 0.2);
+    let mut train_dataloader = DataLoader::new(&x_train, &y_train, 32, 42);
+    let mut test_dataloader = DataLoader::new(&x_test, &y_test, 32, 42);
 
     // Training
     let model = Sequential::new(modules![
@@ -166,7 +168,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for epoch in 0..100 {
         let mut epoch_losses: Vec<f64> = vec![];
-        for (x_batch, y_batch) in dataloader.iter() {
+        for (x_batch, y_batch) in train_dataloader.iter() {
             let x_tensor = Rc::new(RefCell::new(Tensor::new(x_batch.into_dyn(), false)));
             let y_tensor = Rc::new(RefCell::new(Tensor::new(y_batch.into_dyn(), false)));
 
@@ -291,6 +293,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .draw()?;
 
     println!("Wrote scatter plot to {}", filename);
+
+    // Metrics
+    let mut y_true: Vec<usize> = Vec::new();
+    let mut y_pred: Vec<usize> = Vec::new();
+    for (x_batch, y_batch) in test_dataloader.iter() {
+        let input = Rc::new(RefCell::new(Tensor::new(x_batch.into_dyn(), false)));
+        let prediction = model_rc.borrow().forward(input.clone());
+        let probability_value: ndarray::Array1<f64> = prediction
+            .borrow()
+            .data.clone()
+            .iter()
+            .cloned()
+            .collect();
+
+        for (pred, true_label) in probability_value.iter().zip(y_batch.iter()) {
+            // Binary classification threshold
+            let class = if *pred >= 0.5 { 1 } else { 0 };
+            y_pred.push(class);
+            y_true.push(*true_label as usize);
+        }
+    }
+
+    // Compute confusion matrix
+    let mut confusion_matrix = [[0; 2]; 2];
+    for (&t, &p) in y_true.iter().zip(y_pred.iter()) {
+        confusion_matrix[t][p] += 1;
+    }
+    println!("Confusion Matrix:");
+    println!("[[TN, FP], [FN, TP]] = {:?}", confusion_matrix);
+
+    // Compute precision and recall
+    //let tn = confusion_matrix[0][0] as f64;
+    let fp = confusion_matrix[0][1] as f64;
+    let fn_ = confusion_matrix[1][0] as f64;
+    let tp = confusion_matrix[1][1] as f64;
+
+    // Precision: TP / (TP + FP)
+    let precision = if tp + fp > 0.0 { tp / (tp + fp) } else { 0.0 };
+
+    // Recall: TP / (TP + FN)
+    let recall = if tp + fn_ > 0.0 { tp / (tp + fn_) } else { 0.0 };
+
+    println!("Precision: {:.4}", precision);
+    println!("Recall: {:.4}", recall);
 
     Ok(())
 }

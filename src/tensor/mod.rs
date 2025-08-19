@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashSet};
 use std::rc::Rc;
-use ndarray::{Array2, ArrayD, Axis, Ix2};
+use ndarray::{Array2, ArrayD, Ix2};
 use std::f64::EPSILON; // To avoid log(0)
 
 #[derive(Clone)]
@@ -87,7 +87,6 @@ pub fn add(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tenso
             /*a_clone.borrow_mut().grad.as_mut().unwrap() += out.grad.as_ref().unwrap();
             *b_clone.borrow_mut().grad.as_mut().unwrap() += out.grad.as_ref().unwrap(); */
             let a_dim = a_clone.borrow().data.raw_dim();
-            let b_dim = b_clone.borrow().data.raw_dim();
             let out_grad = out.grad.as_ref().unwrap();
 
             // Update a gradient
