@@ -1,7 +1,8 @@
 use ndarray::Array2;
 use rand::seq::SliceRandom;
 use rand::rngs::StdRng;
-use rand::{thread_rng, SeedableRng};
+use rand::{thread_rng, Rng, SeedableRng};
+use std::f64::consts::PI;
 use std::iter::Iterator;
 
 pub struct DataLoader<'a> {
@@ -102,4 +103,35 @@ pub fn train_test_split(
     });
 
     (x_train, x_test, y_train, y_test)
+}
+
+// ========
+// Datasets
+// ========
+
+pub fn generate_spiral(n_per_class: usize, noise: f64, seed: u64) -> Vec<(f64, f64, u8)> {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+    let mut points = Vec::with_capacity(n_per_class * 2);
+
+    for class in 0..2 {
+        for i in 0..n_per_class {
+            // t goes from 0 to 1
+            let t = i as f64 / n_per_class as f64;
+
+            // Angle: 2π * t * number of turns + offset for class
+            let angle = 4.0 * PI * t + (class as f64) * PI;
+
+            // Radius grows linearly with t
+            let r = t;
+
+            // Add Gaussian noise
+            let x = r * angle.cos() + noise * rng.gen::<f64>();
+            let y = r * angle.sin() + noise * rng.gen::<f64>();
+
+            points.push((x, y, class as u8));
+        }
+    }
+
+    points.shuffle(&mut rng);
+    points
 }

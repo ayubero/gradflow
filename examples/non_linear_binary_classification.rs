@@ -12,16 +12,16 @@ use plotters::prelude::*;
 use plotters::style::RGBColor;
 
 use gradflow::modules;
-use gradflow::data::{train_test_split, DataLoader};
+use gradflow::data::{generate_spiral, train_test_split, DataLoader};
 use gradflow::nn::{Linear, Module, ReLU, Sequential, Sigmoid};
-use gradflow::optimizer::SGD;
+use gradflow::optimizer::{Adam, ExponentialDecay, LinearDecay, SGD};
 use gradflow::tensor::{bce_loss, Tensor};
 
 const RED: RGBColor = RGBColor(231, 0, 11);
 const BLUE: RGBColor = RGBColor(21, 93, 252);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parameters
+    /*// Parameters
     let n_per_class = 200;
     let seed = 42u64; // reproducible
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
@@ -54,7 +54,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Optionally shuffle the dataset
-    points.shuffle(&mut rng);
+    points.shuffle(&mut rng);*/
+
+    let n_per_class = 400;
+    let seed = 42;
+    let noise = 0.1;
+
+    let points = generate_spiral(n_per_class, noise, seed);
 
     // Write CSV
     let file = File::create("data/data.csv")?;
@@ -155,18 +161,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut test_dataloader = DataLoader::new(&x_test, &y_test, 32, 42);
 
     // Training
-    let model = Sequential::new(modules![
+    /*let model = Sequential::new(modules![
         Linear::new(2, 16),
         ReLU::new(),
         Linear::new(16, 8),
         ReLU::new(),
         Linear::new(8, 1),
         Sigmoid::new(),
+    ]);*/
+    let model = Sequential::new(modules![
+        Linear::new(2, 32),
+        ReLU::new(),
+        Linear::new(32, 32),
+        ReLU::new(),
+        Linear::new(32, 16),
+        ReLU::new(),
+        Linear::new(16, 1),
+        Sigmoid::new(),
     ]);
-    
-    let optimizer = SGD { params: model.parameters(), lr: 0.5 };
 
-    for epoch in 0..100 {
+    let epochs = 500;
+    
+    //let optimizer = SGD { params: model.parameters(), lr: 0.5 };
+    /*let scheduler = Box::new(LinearDecay { initial_lr: 1.5, total_steps: epochs });
+    let mut optimizer = SGD {
+        params: model.parameters(), 
+        lr: 0.01, 
+        scheduler: Some(scheduler), 
+        step_count: 0
+    };*/
+    let mut optimizer = Adam::new(model.parameters(), 0.001);
+
+    for epoch in 0..epochs {
         let mut epoch_losses: Vec<f64> = vec![];
         for (x_batch, y_batch) in train_dataloader.iter() {
             let x_tensor = Rc::new(RefCell::new(Tensor::new(x_batch.into_dyn(), false)));
