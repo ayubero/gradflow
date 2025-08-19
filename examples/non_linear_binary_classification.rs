@@ -160,11 +160,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Linear::new(8, 1),
         Sigmoid::new(),
     ]);
-    /*let model = Sequential::new(modules![
-        Linear::new(2, 1),
-        Sigmoid::new(),
-    ]);*/
-    let optimizer = SGD { params: model.parameters(), lr: 0.01 };
+    
+    let optimizer = SGD { params: model.parameters(), lr: 0.2 };
 
     for epoch in 0..100 {
         for (x_batch, y_batch) in dataloader.iter() {

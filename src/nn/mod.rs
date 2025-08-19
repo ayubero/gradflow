@@ -59,7 +59,7 @@ pub struct Linear {
 impl Linear {
     pub fn new(in_features: usize, out_features: usize) -> Self {
         let weights = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![out_features, in_features], 0.01), true)));
-        let bias = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![out_features], 0.0), true)));
+        let bias = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![1, out_features], 0.0), true)));
 
         Linear { weights, bias }
     }

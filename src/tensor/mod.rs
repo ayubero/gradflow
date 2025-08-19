@@ -1,6 +1,6 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashSet};
 use std::rc::Rc;
-use ndarray::{ArrayD, Axis, Ix2};
+use ndarray::{Array2, ArrayD, Axis, Ix2};
 use std::f64::EPSILON; // To avoid log(0)
 
 #[derive(Clone)]
@@ -9,6 +9,7 @@ pub struct Tensor {
     pub grad: Option<ArrayD<f64>>,
     requires_grad: bool,
     grad_fn: Option<Rc<RefCell<dyn Fn(&mut Tensor) -> ()>>>, // Backward function
+    parents: Vec<Rc<RefCell<Tensor>>>
 }
 
 impl Tensor {
@@ -18,14 +19,40 @@ impl Tensor {
             grad: None,
             requires_grad,
             grad_fn: None,
+            parents: vec![]
         }
     }
 
     pub fn backward(&mut self) {
+        let mut topo_order: Vec<Rc<RefCell<Tensor>>> = vec![];
+        let mut visited: HashSet<usize> = HashSet::new();
+
+        fn build_topo(t: &Rc<RefCell<Tensor>>, topo: &mut Vec<Rc<RefCell<Tensor>>>, visited: &mut HashSet<usize>) {
+            let addr = Rc::as_ptr(t) as usize;
+            if visited.contains(&addr) { return; }
+            visited.insert(addr);
+            for p in &t.borrow().parents {
+                build_topo(p, topo, visited);
+            }
+            topo.push(Rc::clone(t));
+        }
+
+        self.grad = Some(Array2::from_elem((1, 1), 1.0).into_dyn());
+
+        build_topo(&Rc::new(RefCell::new(self.clone())), &mut topo_order, &mut visited);
+
+        for node in topo_order.into_iter().rev() {
+            let grad_fn_opt = { node.borrow().grad_fn.clone() };
+
+            if let Some(grad_fn) = grad_fn_opt {
+                grad_fn.borrow_mut()(&mut node.borrow_mut());
+            }
+        }
+        /*println!("Running backward");
         if let Some(grad_fn) = &self.grad_fn {
             let grad_fn_clone = Rc::clone(grad_fn);
             grad_fn_clone.borrow_mut()(self);
-        }
+        }*/
     }
 }
 
@@ -33,10 +60,9 @@ impl Tensor {
 pub fn add(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
     let a_data = a.borrow().data.clone();
     let b_data = b.borrow().data.clone();
-    let b_broadcasted = b_data.insert_axis(Axis(0)); // [batch_size, out_features]
-    let b_broadcasted = b_broadcasted.broadcast(a_data.shape()).unwrap();
-    let result_data = a_data + b_broadcasted;
+    let result_data = a_data + b_data;
     let result = Rc::new(RefCell::new(Tensor::new(result_data.into_dyn(), true)));
+    result.borrow_mut().parents = vec![Rc::clone(&a), Rc::clone(&b)];
     
     if a.borrow().requires_grad || b.borrow().requires_grad {
         let a_clone = Rc::clone(a);
@@ -54,12 +80,17 @@ pub fn add(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tenso
             }
         
             if b_clone.borrow().grad.is_none() {
-                let shape = b_clone.borrow().data.raw_dim();
+                let shape = out.data.raw_dim(); // b_clone.borrow().data.raw_dim();
                 b_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
             }
         
-            *a_clone.borrow_mut().grad.as_mut().unwrap() += out.grad.as_ref().unwrap();
-            *b_clone.borrow_mut().grad.as_mut().unwrap() += out.grad.as_ref().unwrap();
+            /*a_clone.borrow_mut().grad.as_mut().unwrap() += out.grad.as_ref().unwrap();
+            *b_clone.borrow_mut().grad.as_mut().unwrap() += out.grad.as_ref().unwrap(); */
+            let a_shape = a_clone.borrow().data.raw_dim();
+            let b_shape = a_clone.borrow().data.raw_dim(); //b_clone.borrow().data.raw_dim();
+            let out_grad = out.grad.as_ref().unwrap();
+            *a_clone.borrow_mut().grad.as_mut().unwrap() += &out_grad.broadcast(a_shape).unwrap();
+            *b_clone.borrow_mut().grad.as_mut().unwrap() += &out_grad.broadcast(b_shape).unwrap();
         })));        
     }
 
@@ -73,6 +104,7 @@ pub fn matmul(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Te
     let b_data = b.borrow().data.clone().into_dimensionality::<Ix2>().expect("b is not 2D");
     let result_data = a_data.dot(&b_data.t());
     let result = Rc::new(RefCell::new(Tensor::new(result_data.into_dyn(), true)));
+    result.borrow_mut().parents = vec![Rc::clone(&a), Rc::clone(&b)];
 
     // Backward pass
     if a.borrow().requires_grad || b.borrow().requires_grad {
@@ -84,41 +116,41 @@ pub fn matmul(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Te
                 out.grad = Some(ArrayD::zeros(out.data.raw_dim()));
             }
 
-            // Gradient for a: out.grad * b^T
+            // Ensure grads exist
             if a_clone.borrow().grad.is_none() {
                 let shape = a_clone.borrow().data.raw_dim();
                 a_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
             }
-            let out_grad_2d = out.grad.as_ref().unwrap()
-                .view()
-                .into_dimensionality::<Ix2>()
-                .expect("out.grad not 2D");
-            let binding = b_clone.borrow();
-            let b_data_2d = binding.data
-                .view()
-                .into_dimensionality::<Ix2>()
-                .expect("b not 2D");
-
-            let grad_a = out_grad_2d.dot(&b_data_2d.t());
-            *a_clone.borrow_mut().grad.as_mut().unwrap() += &grad_a.into_dyn();
-
-            // Gradient for b: a^T * out.grad
             if b_clone.borrow().grad.is_none() {
                 let shape = b_clone.borrow().data.raw_dim();
                 b_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
             }
-            let binding = a_clone.borrow();
-            let a_data_2d = binding.data
+
+            // Gradient for a: out.grad * b^T
+            let out_grad_2d = out.grad.as_ref().unwrap()
                 .view()
                 .into_dimensionality::<Ix2>()
-                .expect("a not 2D");
+                .expect("out.grad not 2D");
+            let b_data_2d = {
+                let binding = b_clone.borrow();
+                binding.data.view().into_dimensionality::<Ix2>().expect("b not 2D").to_owned()
+            };
+
+            let grad_a = out_grad_2d.dot(&b_data_2d);
+            *a_clone.borrow_mut().grad.as_mut().unwrap() += &grad_a.into_dyn();
+
+            // Gradient for b: a^T * out.grad
+            let a_data_2d = {
+                let binding = a_clone.borrow();
+                binding.data.view().into_dimensionality::<Ix2>().expect("a not 2D").to_owned()
+            };
             let out_grad_2d = out.grad.as_ref().unwrap()
                 .view()
                 .into_dimensionality::<Ix2>()
                 .expect("out.grad not 2D");
 
             let grad_b = a_data_2d.t().dot(&out_grad_2d);
-            *b_clone.borrow_mut().grad.as_mut().unwrap() += &grad_b.into_dyn();
+            *b_clone.borrow_mut().grad.as_mut().unwrap() += &grad_b.t().into_dyn();
         })));
     }
 
@@ -130,6 +162,7 @@ pub fn relu(x: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
     let x_data = x.borrow().data.clone();
     let result_data = x_data.mapv(|v| v.max(0.0));
     let result = Rc::new(RefCell::new(Tensor::new(result_data, true)));
+    result.borrow_mut().parents = vec![Rc::clone(&x)];
 
     if x.borrow().requires_grad {
         let x_clone = Rc::clone(x);
@@ -156,6 +189,7 @@ pub fn sigmoid(x: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
     let x_data = x.borrow().data.clone();
     let result_data = x_data.mapv(|v| 1.0 / (1.0 + (-v).exp()));
     let result = Rc::new(RefCell::new(Tensor::new(result_data.clone(), true)));
+    result.borrow_mut().parents = vec![Rc::clone(&x)];
 
     if x.borrow().requires_grad {
         let x_clone = Rc::clone(x);
@@ -189,6 +223,7 @@ pub fn bce_loss(pred: &Rc<RefCell<Tensor>>, target: &Rc<RefCell<Tensor>>) -> Rc<
 
     let mean_loss = loss_data.mean().unwrap();
     let result = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![1], mean_loss), true)));
+    result.borrow_mut().parents = vec![Rc::clone(&pred)];
 
     if pred.borrow().requires_grad {
         let pred_clone = Rc::clone(pred);
