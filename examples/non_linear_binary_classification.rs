@@ -3,6 +3,7 @@ use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use rand_distr::Distribution;
 use statrs::distribution::MultivariateNormal;
+use statrs::statistics::Statistics;
 use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -161,15 +162,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Sigmoid::new(),
     ]);
     
-    let optimizer = SGD { params: model.parameters(), lr: 0.2 };
+    let optimizer = SGD { params: model.parameters(), lr: 0.5 };
 
     for epoch in 0..100 {
+        let mut epoch_losses: Vec<f64> = vec![];
         for (x_batch, y_batch) in dataloader.iter() {
-            // Just one item from the batch (until support for batches is implemented)
-            let x_item = x_batch.row(0).to_owned().insert_axis(Axis(0)).into_dyn();
-            let y_item = y_batch.row(0).to_owned().insert_axis(Axis(0)).into_dyn();
-            let x_tensor = Rc::new(RefCell::new(Tensor::new(x_item, false)));
-            let y_tensor = Rc::new(RefCell::new(Tensor::new(y_item, false)));
+            let x_tensor = Rc::new(RefCell::new(Tensor::new(x_batch.into_dyn(), false)));
+            let y_tensor = Rc::new(RefCell::new(Tensor::new(y_batch.into_dyn(), false)));
 
             // Zero all the gradients
             optimizer.zero_grad();
@@ -178,15 +177,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let y_pred = model.forward(x_tensor);
 
             // Compute loss and its gradients
-            let loss = bce_loss(&y_pred, &y_tensor); // TO-DO: Fake loss
+            let loss = bce_loss(&y_pred, &y_tensor);
+            epoch_losses.push(loss.borrow().data[[0]]);
             loss.borrow_mut().backward();
 
             // Adjust learning weights
             optimizer.step();
-
-            // Logging
-            println!("Epoch {:?} | Loss: {:?}", epoch, loss.borrow().data[[0]]);
         }
+        // Logging
+        println!("Epoch {:?} | Loss: {:?}", epoch, epoch_losses.mean());
     }
 
     println!("Finished!");

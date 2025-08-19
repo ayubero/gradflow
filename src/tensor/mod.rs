@@ -86,11 +86,40 @@ pub fn add(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tenso
         
             /*a_clone.borrow_mut().grad.as_mut().unwrap() += out.grad.as_ref().unwrap();
             *b_clone.borrow_mut().grad.as_mut().unwrap() += out.grad.as_ref().unwrap(); */
-            let a_shape = a_clone.borrow().data.raw_dim();
-            let b_shape = a_clone.borrow().data.raw_dim(); //b_clone.borrow().data.raw_dim();
+            let a_dim = a_clone.borrow().data.raw_dim();
+            let b_dim = b_clone.borrow().data.raw_dim();
             let out_grad = out.grad.as_ref().unwrap();
-            *a_clone.borrow_mut().grad.as_mut().unwrap() += &out_grad.broadcast(a_shape).unwrap();
-            *b_clone.borrow_mut().grad.as_mut().unwrap() += &out_grad.broadcast(b_shape).unwrap();
+
+            // Update a gradient
+            if let Some(a_broadcast) = out_grad.broadcast(a_dim) {
+                *a_clone.borrow_mut().grad.as_mut().unwrap() += &a_broadcast;
+            } else {
+                panic!("Broadcast failed: {:?} to {:?}", out_grad.shape(), a_clone.borrow().data.shape());
+            }
+
+            // Update b gradient
+            // If grad has an extra batch dimension, reduce it
+            let b_shape = {
+                let binding = b_clone.borrow();
+                binding.data.shape().to_owned() // clone the shape so we don’t hold borrow
+            };
+            let reduced_grad = if out_grad.shape()[0] == b_shape[0] {
+                out_grad
+            } else if b_shape[0] == 1 {
+                // Average along the batch dimension
+                &out_grad.mean_axis(ndarray::Axis(0)).unwrap().insert_axis(ndarray::Axis(0))
+            } else {
+                panic!(
+                    "Gradient shape {:?} does not match parameter shape {:?}",
+                    out_grad.shape(),
+                    b_clone.borrow().data.shape()
+                );
+            };
+            if let Some(b_broadcast) = reduced_grad.broadcast(b_shape) {
+                *b_clone.borrow_mut().grad.as_mut().unwrap() += &b_broadcast;
+            } else {
+                panic!("Broadcast failed: {:?} to {:?}", reduced_grad.shape(), b_clone.borrow().data.shape());
+            }
         })));        
     }
 
@@ -217,8 +246,8 @@ pub fn bce_loss(pred: &Rc<RefCell<Tensor>>, target: &Rc<RefCell<Tensor>>) -> Rc<
     let y_pred = pred.borrow().data.clone().into_dimensionality::<Ix2>().expect("y_pred is not 2D");
     let y_target = target.borrow().data.clone().into_dimensionality::<Ix2>().expect("y_target is not 2D");
 
-    // compute BCE loss: - (y*log(p) + (1-y)*log(1-p))
-    let loss_data = -(y_target.dot(&y_pred.mapv(|v| (v + EPSILON).ln())) +
+    // Compute BCE loss: - (y*log(p) + (1-y)*log(1-p))
+    let loss_data = -(y_target.t().dot(&y_pred.mapv(|v| (v + EPSILON).ln())) +
         &(1.0 - y_target) * &y_pred.mapv(|v| (1.0 - v + EPSILON).ln()));
 
     let mean_loss = loss_data.mean().unwrap();

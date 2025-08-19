@@ -15,7 +15,21 @@ impl SGD {
             let mut param_mut = param.borrow_mut();
             if param_mut.grad.is_some() {
                 let grad = param_mut.grad.as_ref().unwrap().clone();
-                param_mut.data -= &(grad * self.lr);
+
+                // If grad has an extra batch dimension, reduce it
+                let reduced_grad = if grad.shape()[0] == param_mut.data.shape()[0] {
+                    grad
+                } else if param_mut.data.shape()[0] == 1 {
+                    // Average along the batch dimension
+                    grad.mean_axis(ndarray::Axis(0)).unwrap().insert_axis(ndarray::Axis(0))
+                } else {
+                    panic!(
+                        "Gradient shape {:?} does not match parameter shape {:?}",
+                        grad.shape(),
+                        param_mut.data.shape()
+                    );
+                };
+                param_mut.data -= &(reduced_grad * self.lr);
             }
         }
     }
