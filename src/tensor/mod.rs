@@ -1,6 +1,7 @@
 use std::{cell::RefCell, collections::HashSet};
 use std::rc::Rc;
-use ndarray::{Array2, ArrayD, Ix2};
+use std::ops::AddAssign;
+use ndarray::{s, Array2, Array4, ArrayD, Axis, Ix1, Ix2, Ix4};
 use std::f64::EPSILON; // To avoid log(0)
 
 #[derive(Clone)]
@@ -179,6 +180,145 @@ pub fn matmul(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Te
 
             let grad_b = a_data_2d.t().dot(&out_grad_2d);
             *b_clone.borrow_mut().grad.as_mut().unwrap() += &grad_b.t().into_dyn();
+        })));
+    }
+
+    result
+}
+
+// Convolution 2d
+pub fn conv2d(
+    input: &Rc<RefCell<Tensor>>,   // (N, C_in, H, W)
+    weight: &Rc<RefCell<Tensor>>,  // (C_out, C_in, kH, kW)
+    bias: Option<&Rc<RefCell<Tensor>>>, // (C_out)
+    stride: usize,
+    padding: usize,
+) -> Rc<RefCell<Tensor>> {
+    let x = input.borrow().data.clone().into_dimensionality::<Ix4>().unwrap();
+    let w = weight.borrow().data.clone().into_dimensionality::<Ix4>().unwrap();
+    let (n, c_in, h, w_in) = (x.shape()[0], x.shape()[1], x.shape()[2], x.shape()[3]);
+    let (c_out, _, k_h, k_w) = (w.shape()[0], w.shape()[1], w.shape()[2], w.shape()[3]);
+
+    // Output dimensions
+    let h_out = (h + 2 * padding - k_h) / stride + 1;
+    let w_out = (w_in + 2 * padding - k_w) / stride + 1;
+
+    // Pad input
+    let mut x_padded = Array4::<f64>::zeros((n, c_in, h + 2 * padding, w_in + 2 * padding));
+    x_padded
+        .slice_mut(s![.., .., padding..padding + h, padding..padding + w_in])
+        .assign(&x);
+
+    // Forward
+    let mut y = Array4::<f64>::zeros((n, c_out, h_out, w_out));
+    for b in 0..n {
+        for oc in 0..c_out {
+            for i in 0..h_out {
+                for j in 0..w_out {
+                    let h_start = i * stride;
+                    let w_start = j * stride;
+                    let patch = x_padded.slice(s![b, .., h_start..h_start + k_h, w_start..w_start + k_w]);
+                    let val = (patch.to_owned() * w.slice(s![oc, .., .., ..]).to_owned()).sum();
+                    y[[b, oc, i, j]] = val;
+                }
+            }
+        }
+    }
+
+    // Add bias if provided
+    if let Some(bias_tensor) = bias {
+        let b_data = bias_tensor.borrow().data.clone().into_dimensionality::<Ix1>().unwrap();
+        for oc in 0..c_out {
+            y.slice_mut(s![.., oc, .., ..]).add_assign(b_data[oc]);
+        }
+    }
+
+    let result = Rc::new(RefCell::new(Tensor::new(y.into_dyn(), true)));
+    let mut parents = vec![Rc::clone(input), Rc::clone(weight)];
+    if let Some(bias_tensor) = bias {
+        parents.push(Rc::clone(bias_tensor));
+    }
+    result.borrow_mut().parents = parents;
+
+    // Backward
+    if input.borrow().requires_grad || weight.borrow().requires_grad || bias.map(|b| b.borrow().requires_grad).unwrap_or(false) {
+        let input_clone = Rc::clone(input);
+        let weight_clone = Rc::clone(weight);
+        let bias_clone = bias.map(|b| Rc::clone(b));
+
+        result.borrow_mut().grad_fn = Some(Rc::new(RefCell::new(move |out: &mut Tensor| {
+            let grad_y = out.grad.as_ref().unwrap().clone().into_dimensionality::<Ix4>().unwrap();
+            let x = input_clone.borrow().data.clone().into_dimensionality::<Ix4>().unwrap();
+            let w = weight_clone.borrow().data.clone().into_dimensionality::<Ix4>().unwrap();
+            let (n, c_in, h, w_in) = (x.shape()[0], x.shape()[1], x.shape()[2], x.shape()[3]);
+            let (c_out, _, k_h, k_w) = (w.shape()[0], w.shape()[1], w.shape()[2], w.shape()[3]);
+            let h_out = grad_y.shape()[2];
+            let w_out = grad_y.shape()[3];
+
+            // Grad w.r.t. input
+            if input_clone.borrow().requires_grad {
+                if input_clone.borrow().grad.is_none() {
+                    let shape = input_clone.borrow().data.raw_dim();
+                    input_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
+                }
+                let mut grad_x_padded = Array4::<f64>::zeros((n, c_in, h + 2 * padding, w_in + 2 * padding));
+                for b in 0..n {
+                    for oc in 0..c_out {
+                        for i in 0..h_out {
+                            for j in 0..w_out {
+                                let h_start = i * stride;
+                                let w_start = j * stride;
+                                let grad_val = grad_y[[b, oc, i, j]];
+                                grad_x_padded
+                                    .slice_mut(s![b, .., h_start..h_start + k_h, w_start..w_start + k_w])
+                                    .scaled_add(grad_val, &w.slice(s![oc, .., .., ..]));
+                            }
+                        }
+                    }
+                }
+                // Remove padding
+                let grad_x = grad_x_padded.slice(s![.., .., padding..padding + h, padding..padding + w_in]).to_owned();
+                *input_clone.borrow_mut().grad.as_mut().unwrap() += &grad_x.into_dyn();
+            }
+
+            // Grad w.r.t. weight
+            if weight_clone.borrow().requires_grad {
+                if weight_clone.borrow().grad.is_none() {
+                    let shape = weight_clone.borrow().data.raw_dim();
+                    weight_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
+                }
+                let mut grad_w = Array4::<f64>::zeros(w.raw_dim());
+                let mut x_padded = Array4::<f64>::zeros((n, c_in, h + 2 * padding, w_in + 2 * padding));
+                x_padded
+                    .slice_mut(s![.., .., padding..padding + h, padding..padding + w_in])
+                    .assign(&x);
+                for b in 0..n {
+                    for oc in 0..c_out {
+                        for i in 0..h_out {
+                            for j in 0..w_out {
+                                let h_start = i * stride;
+                                let w_start = j * stride;
+                                let patch = x_padded.slice(s![b, .., h_start..h_start + k_h, w_start..w_start + k_w]);
+                                let grad_val = grad_y[[b, oc, i, j]];
+                                grad_w.slice_mut(s![oc, .., .., ..]).scaled_add(grad_val, &patch);
+                            }
+                        }
+                    }
+                }
+                *weight_clone.borrow_mut().grad.as_mut().unwrap() += &grad_w.into_dyn();
+            }
+
+            // Grad w.r.t. bias
+            if let Some(bias_tensor) = &bias_clone {
+                if bias_tensor.borrow().requires_grad {
+                    if bias_tensor.borrow().grad.is_none() {
+                        let shape = bias_tensor.borrow().data.raw_dim();
+                        bias_tensor.borrow_mut().grad = Some(ArrayD::zeros(shape));
+                    }
+                    let grad_b = grad_y.sum_axis(Axis(0)).sum_axis(Axis(1)).sum_axis(Axis(1));
+                    *bias_tensor.borrow_mut().grad.as_mut().unwrap() += &grad_b.into_dyn();
+                }
+            }
         })));
     }
 

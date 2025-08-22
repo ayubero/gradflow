@@ -1,6 +1,6 @@
 # GradFlow
 
-A tiny autodifferentiation engine with a PyTorch-like API for building neural networks.
+A tiny autodifferentiation engine with a PyTorch-like API for building neural networks in Rust.
 
 ## Examples
 

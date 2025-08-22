@@ -1,19 +1,34 @@
-use ndarray::Array2;
+use ndarray::{Array, Array2, ArrayBase, Axis, Data, Dimension, RemoveAxis};
 use rand::seq::SliceRandom;
 use rand::rngs::StdRng;
 use rand::{thread_rng, Rng, SeedableRng};
 use std::f64::consts::PI;
 use std::iter::Iterator;
 
-pub struct DataLoader<'a> {
-    x: &'a Array2<f64>,
-    y: &'a Array2<f64>,
+pub struct DataLoader<'a, A, D, S>
+where
+    A: Clone,
+    D: Dimension + RemoveAxis,
+    S: Data<Elem = A>,
+{
+    x: &'a ArrayBase<S, D>,
+    y: &'a ArrayBase<S, D>,
     batch_size: usize,
     rng: StdRng,
 }
 
-impl<'a> DataLoader<'a> {
-    pub fn new(x: &'a Array2<f64>, y: &'a Array2<f64>, batch_size: usize, seed: u64) -> Self {
+impl<'a, A, D, S> DataLoader<'a, A, D, S>
+where
+    A: Clone,
+    D: Dimension + RemoveAxis,
+    S: Data<Elem = A>,
+{
+    pub fn new(
+        x: &'a ArrayBase<S, D>,
+        y: &'a ArrayBase<S, D>,
+        batch_size: usize,
+        seed: u64,
+    ) -> Self {
         Self {
             x,
             y,
@@ -22,11 +37,11 @@ impl<'a> DataLoader<'a> {
         }
     }
 
-    // Returns a fresh iterator over batches
-    pub fn iter(&mut self) -> DataLoaderIter<'a> {
-        let n_samples = self.x.nrows();
+    pub fn iter(&mut self) -> DataLoaderIter<'a, A, D, S> {
+        let n_samples = self.x.len_of(Axis(0));
         let mut indices: Vec<usize> = (0..n_samples).collect();
-        indices.shuffle(&mut self.rng); // shuffle at start of epoch
+        indices.shuffle(&mut self.rng);
+
         DataLoaderIter {
             x: self.x,
             y: self.y,
@@ -37,17 +52,26 @@ impl<'a> DataLoader<'a> {
     }
 }
 
-// The actual iterator returned for each epoch
-pub struct DataLoaderIter<'a> {
-    x: &'a Array2<f64>,
-    y: &'a Array2<f64>,
+pub struct DataLoaderIter<'a, A, D, S>
+where
+    A: Clone,
+    D: Dimension + RemoveAxis,
+    S: Data<Elem = A>,
+{
+    x: &'a ArrayBase<S, D>,
+    y: &'a ArrayBase<S, D>,
     indices: Vec<usize>,
     batch_size: usize,
     current: usize,
 }
 
-impl<'a> Iterator for DataLoaderIter<'a> {
-    type Item = (Array2<f64>, Array2<f64>);
+impl<'a, A, D, S> Iterator for DataLoaderIter<'a, A, D, S>
+where
+    A: Clone,
+    D: Dimension + RemoveAxis,
+    S: Data<Elem = A>,
+{
+    type Item = (Array<A, D>, Array<A, D>);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current >= self.indices.len() {
@@ -57,13 +81,8 @@ impl<'a> Iterator for DataLoaderIter<'a> {
         let end = (self.current + self.batch_size).min(self.indices.len());
         let batch_indices = &self.indices[self.current..end];
 
-        let x_batch = Array2::from_shape_fn((batch_indices.len(), self.x.ncols()), |(i, j)| {
-            self.x[[batch_indices[i], j]]
-        });
-
-        let y_batch = Array2::from_shape_fn((batch_indices.len(), self.y.ncols()), |(i, j)| {
-            self.y[[batch_indices[i], j]]
-        });
+        let x_batch = self.x.select(Axis(0), batch_indices);
+        let y_batch = self.y.select(Axis(0), batch_indices);
 
         self.current = end;
         Some((x_batch, y_batch))
