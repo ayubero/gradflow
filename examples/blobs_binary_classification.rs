@@ -90,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Sigmoid::new(),
     ]);
 
-    let epochs = 500;
+    let epochs = 300;
     
     let mut optimizer = SGD {
         params: model.parameters(), 
@@ -120,14 +120,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             optimizer.step();
         }
         // Logging
-        println!("Epoch {:?} | Loss: {:?}", epoch, epoch_losses.mean());
+        //println!("Epoch {:?} | Loss: {:?}", epoch, epoch_losses.mean());
     }
 
     // Inference
     let prediction = model.forward(
         Rc::new(RefCell::new(Tensor::new(Array2::from_elem((1, 2), 1.0).into_dyn(), false)))
     );
-    println!("Probality of belonging to class 1: {:?}", prediction.borrow().data);
+    println!("Probability of belonging to class 1: {:?}", prediction.borrow().data);
+
+    println!("x_train {:?}", x_train.shape());
+    println!("x_test {:?}", x_test.shape());
     
     // Plot decision regions
     let filename = "data/blobs_decision_regions.svg";

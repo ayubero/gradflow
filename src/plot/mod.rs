@@ -6,7 +6,7 @@ use plotters::prelude::*;
 use plotters::style::RGBColor;
 
 use crate::nn::Module;
-use crate::tensor::Tensor;
+use crate::tensor::{self, Tensor};
 
 const RED: RGBColor = RGBColor(231, 0, 11);
 const BLUE: RGBColor = RGBColor(21, 93, 252);
@@ -134,14 +134,18 @@ pub fn plot_decision_regions(points: &Vec<(f64, f64, u8)>, filename: &'static st
             (0..resolution).map(move |j| {
                 let x = x_min - pad_x + i as f64 * x_step;
                 let y = y_min - pad_y + j as f64 * y_step;
-                let x_squared = x.powi(2);
+                /*let x_squared = x.powi(2);
                 let y_squared = y.powi(2);
-                let x_by_y = x*y;
+                let x_by_y = x*y;*/
 
                 // Predict
-                let tensor_data = Array2::from_shape_vec(
+                /*let tensor_data = Array2::from_shape_vec(
                     (1, 5), vec![x, y, x_squared, y_squared, x_by_y]
+                ).unwrap();*/
+                let tensor_data = Array2::from_shape_vec(
+                    (1, 2), vec![x, y]
                 ).unwrap();
+                println!("Input shape: {:?}", tensor_data.shape());
                 let input = Rc::new(RefCell::new(
                     Tensor::new(tensor_data.into_dyn(), false)
                 ));

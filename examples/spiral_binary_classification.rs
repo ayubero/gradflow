@@ -97,7 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let prediction = model.forward(
         Rc::new(RefCell::new(Tensor::new(Array2::from_elem((1, 5), 1.0).into_dyn(), false)))
     );
-    println!("Probality of belonging to class 1: {:?}", prediction.borrow().data);
+    println!("Probability of belonging to class 1: {:?}", prediction.borrow().data);
     
     // Plot decision regions
     let filename = "data/spiral_decision_regions.svg";

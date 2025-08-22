@@ -131,6 +131,8 @@ pub fn matmul(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Te
     // Forward pass
     let a_data = a.borrow().data.clone().into_dimensionality::<Ix2>().expect("a is not 2D");
     let b_data = b.borrow().data.clone().into_dimensionality::<Ix2>().expect("b is not 2D");
+    println!("A shape: {:?}", a_data.shape());
+    println!("B Shape: {:?}", b_data.shape());
     let result_data = a_data.dot(&b_data.t());
     let result = Rc::new(RefCell::new(Tensor::new(result_data.into_dyn(), true)));
     result.borrow_mut().parents = vec![Rc::clone(&a), Rc::clone(&b)];

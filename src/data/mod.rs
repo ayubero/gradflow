@@ -5,27 +5,33 @@ use rand::{thread_rng, Rng, SeedableRng};
 use std::f64::consts::PI;
 use std::iter::Iterator;
 
-pub struct DataLoader<'a, A, D, S>
+pub struct DataLoader<'a, Ax, Dx, Sx, Ay, Dy, Sy>
 where
-    A: Clone,
-    D: Dimension + RemoveAxis,
-    S: Data<Elem = A>,
+    Ax: Clone,
+    Dx: Dimension + RemoveAxis,
+    Sx: Data<Elem = Ax>,
+    Ay: Clone,
+    Dy: Dimension + RemoveAxis,
+    Sy: Data<Elem = Ay>,
 {
-    x: &'a ArrayBase<S, D>,
-    y: &'a ArrayBase<S, D>,
+    x: &'a ArrayBase<Sx, Dx>,
+    y: &'a ArrayBase<Sy, Dy>,
     batch_size: usize,
     rng: StdRng,
 }
 
-impl<'a, A, D, S> DataLoader<'a, A, D, S>
+impl<'a, Ax, Dx, Sx, Ay, Dy, Sy> DataLoader<'a, Ax, Dx, Sx, Ay, Dy, Sy>
 where
-    A: Clone,
-    D: Dimension + RemoveAxis,
-    S: Data<Elem = A>,
+    Ax: Clone,
+    Dx: Dimension + RemoveAxis,
+    Sx: Data<Elem = Ax>,
+    Ay: Clone,
+    Dy: Dimension + RemoveAxis,
+    Sy: Data<Elem = Ay>,
 {
     pub fn new(
-        x: &'a ArrayBase<S, D>,
-        y: &'a ArrayBase<S, D>,
+        x: &'a ArrayBase<Sx, Dx>,
+        y: &'a ArrayBase<Sy, Dy>,
         batch_size: usize,
         seed: u64,
     ) -> Self {
@@ -37,7 +43,7 @@ where
         }
     }
 
-    pub fn iter(&mut self) -> DataLoaderIter<'a, A, D, S> {
+    pub fn iter(&mut self) -> DataLoaderIter<'a, Ax, Dx, Sx, Ay, Dy, Sy> {
         let n_samples = self.x.len_of(Axis(0));
         let mut indices: Vec<usize> = (0..n_samples).collect();
         indices.shuffle(&mut self.rng);
@@ -52,26 +58,32 @@ where
     }
 }
 
-pub struct DataLoaderIter<'a, A, D, S>
+pub struct DataLoaderIter<'a, Ax, Dx, Sx, Ay, Dy, Sy>
 where
-    A: Clone,
-    D: Dimension + RemoveAxis,
-    S: Data<Elem = A>,
+    Ax: Clone,
+    Dx: Dimension + RemoveAxis,
+    Sx: Data<Elem = Ax>,
+    Ay: Clone,
+    Dy: Dimension + RemoveAxis,
+    Sy: Data<Elem = Ay>,
 {
-    x: &'a ArrayBase<S, D>,
-    y: &'a ArrayBase<S, D>,
+    x: &'a ArrayBase<Sx, Dx>,
+    y: &'a ArrayBase<Sy, Dy>,
     indices: Vec<usize>,
     batch_size: usize,
     current: usize,
 }
 
-impl<'a, A, D, S> Iterator for DataLoaderIter<'a, A, D, S>
+impl<'a, Ax, Dx, Sx, Ay, Dy, Sy> Iterator for DataLoaderIter<'a, Ax, Dx, Sx, Ay, Dy, Sy>
 where
-    A: Clone,
-    D: Dimension + RemoveAxis,
-    S: Data<Elem = A>,
+    Ax: Clone,
+    Dx: Dimension + RemoveAxis,
+    Sx: Data<Elem = Ax>,
+    Ay: Clone,
+    Dy: Dimension + RemoveAxis,
+    Sy: Data<Elem = Ay>,
 {
-    type Item = (Array<A, D>, Array<A, D>);
+    type Item = (Array<Ax, Dx>, Array<Ay, Dy>);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.current >= self.indices.len() {
@@ -88,6 +100,7 @@ where
         Some((x_batch, y_batch))
     }
 }
+
 
 /// Splits dataset into train and test sets
 pub fn train_test_split(
