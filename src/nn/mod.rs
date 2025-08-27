@@ -1,6 +1,6 @@
-use std::{any::Any, cell::RefCell, rc::Rc};
+use std::{any::Any, cell::{Ref, RefCell}, rc::Rc};
 
-use ndarray::ArrayD;
+use ndarray::{ArrayD, Axis};
 
 use crate::{init::{InitType, Initializable}, tensor::{add, matmul, relu, sigmoid, tanh, Tensor}};
 
@@ -60,6 +60,71 @@ impl Module for Sequential {
         self
     }
 
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+//
+//
+//
+
+pub struct PolyExpand {
+    pub degree: usize,
+}
+
+impl PolyExpand {
+    pub fn new(degree: usize) -> Self {
+        Self { degree }
+    }
+
+    fn expand_row(&self, x: f64, y: f64) -> Vec<f64> {
+        let mut expanded = vec![x, y];
+        if self.degree >= 2 {
+            expanded.push(x.powi(2));
+            expanded.push(y.powi(2));
+            expanded.push(x * y);
+        }
+        if self.degree >= 3 {
+            expanded.push(x.powi(3));
+            expanded.push(y.powi(3));
+            expanded.push(x.powi(2) * y);
+            expanded.push(x * y.powi(2));
+        }
+        expanded
+    }
+}
+
+impl Module for PolyExpand {
+    fn forward(&self, x: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+        let input = &x.borrow().data;
+        let mut rows = Vec::new();
+        for row in input.rows() {
+            let x = row[0];
+            let y = row[1];
+            rows.push(self.expand_row(x, y));
+        }
+
+        let arrays: Vec<ndarray::Array1<f64>> = rows
+            .into_iter()
+            .map(|r| ndarray::Array1::from(r))
+            .collect();
+
+        let views: Vec<_> = arrays.iter().map(|a| a.view()).collect();
+
+        let result = ndarray::stack(Axis(0), &views).unwrap();
+        
+        Rc::new(RefCell::new(Tensor::new(result.into_dyn(), false)))
+    }
+    
+    fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {
+        vec![]
+    }
+    
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }

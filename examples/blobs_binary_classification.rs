@@ -120,7 +120,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             optimizer.step();
         }
         // Logging
-        //println!("Epoch {:?} | Loss: {:?}", epoch, epoch_losses.mean());
+        println!("Epoch {:?} | Loss: {:?}", epoch, epoch_losses.mean());
     }
 
     // Inference
