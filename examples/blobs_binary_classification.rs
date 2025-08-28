@@ -63,7 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Draw scatter plot
     let filename = "data/blobs_scatter.svg";
-    plot_scatter(&points, filename).expect("Couldn't plot scatter");
+    plot_scatter(&points, filename, None).expect("Couldn't plot scatter");
 
     // Separate features and labels
     let n_samples = points.len();
@@ -134,7 +134,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Plot decision regions
     let filename = "data/blobs_decision_regions.svg";
-    plot_decision_regions(&points, filename, &model).expect("Couldn't plot decision regions");
+    plot_decision_regions(&points, filename, &model, Some("Blobs decision regions")).expect("Couldn't plot decision regions");
 
     // Metrics
     let mut y_true: Vec<usize> = Vec::new();

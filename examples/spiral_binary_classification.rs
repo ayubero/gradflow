@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Wrote dataset to data.csv ({} samples).", points.len());
 
     let filename = "data/spiral_scatter.svg";
-    plot_scatter(&points, filename).expect("Couldn't plot scatter");
+    plot_scatter(&points, filename, None).expect("Couldn't plot scatter");
 
     // Separate features and labels
     let n_samples = points.len();
@@ -67,6 +67,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut optimizer = Adam::new(model.parameters(), 0.003);
 
     for epoch in 0..epochs {
+        // Create animation frame
+        //let frame_name = format!("data/frame_{:04}.svg", epoch);
+        //let caption = format!("Epoch {}", epoch);
+        //plot_decision_regions(&points, &frame_name, &model, Some(&caption)).expect("Couldn't plot decision regions");
+
         let mut epoch_losses: Vec<f64> = vec![];
         for (x_batch, y_batch) in train_dataloader.iter() {
             let x_tensor = Rc::new(RefCell::new(Tensor::new(x_batch.into_dyn(), false)));
@@ -98,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Plot decision regions
     let filename = "data/spiral_decision_regions.svg";
-    plot_decision_regions(&points, filename, &model).expect("Couldn't plot decision regions");
+    plot_decision_regions(&points, filename, &model, Some("Spiral decision regions")).expect("Couldn't plot decision regions");
 
     // Metrics
     let mut y_true: Vec<usize> = Vec::new();

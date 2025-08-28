@@ -11,7 +11,7 @@ use crate::tensor::Tensor;
 const RED: RGBColor = RGBColor(231, 0, 11);
 const BLUE: RGBColor = RGBColor(21, 93, 252);
 
-fn compute_plot_ranges(points: &Vec<(f64, f64, u8)>) -> (Vec<f64>, Vec<f64>, f64, f64, f64, f64) {
+pub fn compute_plot_ranges(points: &Vec<(f64, f64, u8)>) -> (Vec<f64>, Vec<f64>, f64, f64, f64, f64) {
     let xs: Vec<f64> = points.iter().map(|(x, _, _)| *x).collect();
     let ys: Vec<f64> = points.iter().map(|(_, y, _)| *y).collect();
     let x_min = xs.iter().cloned().fold(f64::INFINITY, f64::min);
@@ -22,20 +22,19 @@ fn compute_plot_ranges(points: &Vec<(f64, f64, u8)>) -> (Vec<f64>, Vec<f64>, f64
     (xs, ys, x_min, x_max, y_min, y_max)
 }
 
-pub fn plot_scatter(points: &Vec<(f64, f64, u8)>, filename: &'static str) -> Result<(), Box<dyn std::error::Error>> {
+pub fn plot_scatter(points: &Vec<(f64, f64, u8)>, filename: &'static str, caption: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     // Compute plot ranges (padding included)
     let (_xs, _ys, x_min, x_max, y_min, y_max) = compute_plot_ranges(&points);
     let pad_x = (x_max - x_min) * 0.12 + 0.1;
     let pad_y = (y_max - y_min) * 0.12 + 0.1;
 
     // Draw scatter plot
-    
     let root = SVGBackend::new(filename, (800, 600)).into_drawing_area();
     root.fill(&WHITE)?;
 
     let mut chart = ChartBuilder::on(&root)
         .margin(20)
-        .caption("2-class dataset (2 features)", ("Ubuntu", 20).into_font())
+        .caption(caption.unwrap_or("Scatter plot"), ("Ubuntu", 20).into_font())
         .x_label_area_size(40)
         .y_label_area_size(40)
         .build_cartesian_2d(
@@ -90,7 +89,7 @@ pub fn plot_scatter(points: &Vec<(f64, f64, u8)>, filename: &'static str) -> Res
     Ok(())
 }
 
-pub fn plot_decision_regions(points: &Vec<(f64, f64, u8)>, filename: &str, model: &dyn Module) -> Result<(), Box<dyn std::error::Error>> {
+pub fn plot_decision_regions(points: &Vec<(f64, f64, u8)>, filename: &str, model: &dyn Module, caption: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     // Compute plot ranges (padding included)
     let (_xs, _ys, x_min, x_max, y_min, y_max) = compute_plot_ranges(&points);
     let pad_x = (x_max - x_min) * 0.12 + 0.1;
@@ -101,7 +100,7 @@ pub fn plot_decision_regions(points: &Vec<(f64, f64, u8)>, filename: &str, model
 
     let mut chart = ChartBuilder::on(&root)
         .margin(20)
-        .caption("2-class dataset (2 features)", ("Ubuntu", 20).into_font())
+        .caption(caption.unwrap_or("Decision regions"), ("Ubuntu", 20).into_font())
         .x_label_area_size(40)
         .y_label_area_size(40)
         .build_cartesian_2d(
