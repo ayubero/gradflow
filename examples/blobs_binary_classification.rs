@@ -13,7 +13,7 @@ use gradflow::modules;
 use gradflow::data::{train_test_split, DataLoader};
 use gradflow::nn::{Linear, Module, ReLU, Sequential, Sigmoid};
 use gradflow::optimizer::SGD;
-use gradflow::tensor::{bce_loss, Tensor};
+use gradflow::tensor::{binary_cross_entropy_loss, Tensor};
 use gradflow::plot::{plot_decision_regions, plot_scatter};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -112,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let y_pred = model.forward(x_tensor);
 
             // Compute loss and its gradients
-            let loss = bce_loss(&y_pred, &y_tensor);
+            let loss = binary_cross_entropy_loss(&y_pred, &y_tensor);
             epoch_losses.push(loss.borrow().data[[0]]);
             loss.borrow_mut().backward();
 

@@ -40,7 +40,7 @@ for f in frame_*.svg; do
 done
 ```
 
-Use FFmpeg to merge all the PNG frames into an MP4 video:
+Use FFmpeg to merge all PNG frames into an MP4 video:
 
 ```
 ffmpeg -framerate 30 -i frame_%04d.png -pix_fmt yuv420p output.mp4

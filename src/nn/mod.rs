@@ -65,9 +65,9 @@ impl Module for Sequential {
     }
 }
 
-//
-//
-//
+// ====================
+// Polynomial expansion
+// ====================
 
 pub struct PolyExpand {
     pub degree: usize,

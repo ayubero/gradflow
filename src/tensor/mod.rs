@@ -410,7 +410,7 @@ pub fn tanh(x: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
 }
 
 // BCE loss function
-pub fn bce_loss(pred: &Rc<RefCell<Tensor>>, target: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+pub fn binary_cross_entropy_loss(pred: &Rc<RefCell<Tensor>>, target: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
     let y_pred = pred.borrow().data.clone().into_dimensionality::<Ix2>().expect("y_pred is not 2D");
     let y_target = target.borrow().data.clone().into_dimensionality::<Ix2>().expect("y_target is not 2D");
 
@@ -440,6 +440,72 @@ pub fn bce_loss(pred: &Rc<RefCell<Tensor>>, target: &Rc<RefCell<Tensor>>) -> Rc<
             
             // Accumulate gradients in pred
             *pred_clone.borrow_mut().grad.as_mut().unwrap() += &grad;
+        })));
+    }
+
+    result
+}
+
+// Cross entropy loss
+pub fn cross_entropy_loss(
+    pred: &Rc<RefCell<Tensor>>,
+    target: &Rc<RefCell<Tensor>>,
+) -> Rc<RefCell<Tensor>> {
+    let logits = pred.borrow().data.clone().into_dimensionality::<Ix2>().expect("pred is not 2D");
+    let y_target = target.borrow().data.clone().into_dimensionality::<Ix2>().expect("target is not 2D");
+
+    // Softmax
+    let max_per_row = logits.map_axis(Axis(1), |row| row.fold(f64::NEG_INFINITY, |a, &b| a.max(b)));
+    let max_per_row = max_per_row.insert_axis(Axis(1));
+    let exp_shifted = (&logits - &max_per_row).mapv(|v| v.exp());
+    let sum_exp = exp_shifted.sum_axis(Axis(1)).insert_axis(Axis(1));
+    let probs = &exp_shifted / &sum_exp;
+
+    // Cross entropy: -sum(y * log(p))
+    let loss_data = -(&y_target * probs.mapv(|v| (v + EPSILON).ln()));
+    let mean_loss = loss_data.sum() / (y_target.shape()[0] as f64);
+
+    let result = Rc::new(RefCell::new(Tensor::new(
+        ArrayD::from_elem(vec![1], mean_loss),
+        true,
+    )));
+    result.borrow_mut().parents = vec![Rc::clone(pred)];
+
+    if pred.borrow().requires_grad {
+        let pred_clone = Rc::clone(pred);
+        let target_clone = Rc::clone(target);
+
+        result.borrow_mut().grad_fn = Some(Rc::new(RefCell::new(move |_: &mut Tensor| {
+            let logits = pred_clone
+                .borrow()
+                .data
+                .clone()
+                .into_dimensionality::<Ix2>()
+                .expect("pred is not 2D");
+            let y_target = target_clone
+                .borrow()
+                .data
+                .clone()
+                .into_dimensionality::<Ix2>()
+                .expect("target is not 2D");
+
+            // Recompute softmax
+            let max_per_row =
+                logits.map_axis(Axis(1), |row| row.fold(f64::NEG_INFINITY, |a, &b| a.max(b)));
+            let max_per_row = max_per_row.insert_axis(Axis(1));
+            let exp_shifted = (&logits - &max_per_row).mapv(|v| v.exp());
+            let sum_exp = exp_shifted.sum_axis(Axis(1)).insert_axis(Axis(1));
+            let probs = &exp_shifted / &sum_exp;
+
+            if pred_clone.borrow().grad.is_none() {
+                let shape = pred_clone.borrow().data.raw_dim();
+                pred_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
+            }
+
+            // Gradient: (p - y) / N
+            let grad = (probs - &y_target) / (y_target.shape()[0] as f64);
+
+            *pred_clone.borrow_mut().grad.as_mut().unwrap() += &grad.into_dyn();
         })));
     }
 
