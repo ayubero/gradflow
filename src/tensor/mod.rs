@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashSet};
 use std::rc::Rc;
 use std::ops::AddAssign;
-use ndarray::{s, Array2, Array4, ArrayD, Axis, Ix1, Ix2, Ix4};
+use ndarray::{s, Array2, Array4, ArrayD, Axis, Ix1, Ix2, Ix4, IxDyn};
 use std::f64::EPSILON; // To avoid log(0)
 
 #[derive(Clone)]
@@ -319,6 +319,157 @@ pub fn conv2d(
                     *bias_tensor.borrow_mut().grad.as_mut().unwrap() += &grad_b.into_dyn();
                 }
             }
+        })));
+    }
+
+    result
+}
+
+// MaxPool
+pub fn maxpool2d(
+    input: &Rc<RefCell<Tensor>>, // (N, C, H, W)
+    k_h: usize,
+    k_w: usize,
+    stride: usize,
+    padding: usize,
+) -> Rc<RefCell<Tensor>> {
+    // Shapes
+    let x = input.borrow().data.clone().into_dimensionality::<Ix4>().unwrap();
+    let (n, c, h, w) = (x.shape()[0], x.shape()[1], x.shape()[2], x.shape()[3]);
+
+    let h_out = (h + 2 * padding - k_h) / stride + 1;
+    let w_out = (w + 2 * padding - k_w) / stride + 1;
+
+    // Pad input with -inf so padded areas never become the max
+    let mut x_padded = Array4::from_elem((n, c, h + 2 * padding, w + 2 * padding), f64::NEG_INFINITY);
+    x_padded
+        .slice_mut(s![.., .., padding..padding + h, padding..padding + w])
+        .assign(&x);
+
+    // Forward: max + record argmax indices for backward
+    let mut y = Array4::<f64>::zeros((n, c, h_out, w_out));
+    // store argmax offsets within each pooling window
+    let mut arg_h = Array4::<usize>::zeros((n, c, h_out, w_out));
+    let mut arg_w = Array4::<usize>::zeros((n, c, h_out, w_out));
+
+    for b in 0..n {
+        for ch in 0..c {
+            for i in 0..h_out {
+                for j in 0..w_out {
+                    let h_start = i * stride;
+                    let w_start = j * stride;
+
+                    let patch = x_padded.slice(s![b, ch, h_start..h_start + k_h, w_start..w_start + k_w]);
+
+                    // Find max and its (hi, wi) inside the window
+                    let mut max_val = f64::NEG_INFINITY;
+                    let mut max_hi = 0usize;
+                    let mut max_wi = 0usize;
+
+                    for hi in 0..k_h {
+                        for wi in 0..k_w {
+                            let v = patch[[hi, wi]];
+                            if v > max_val {
+                                max_val = v;
+                                max_hi = hi;
+                                max_wi = wi;
+                            }
+                        }
+                    }
+
+                    y[[b, ch, i, j]] = max_val;
+                    arg_h[[b, ch, i, j]] = max_hi;
+                    arg_w[[b, ch, i, j]] = max_wi;
+                }
+            }
+        }
+    }
+
+    // Wrap result tensor
+    let result = Rc::new(RefCell::new(Tensor::new(y.clone().into_dyn(), true)));
+    result.borrow_mut().parents = vec![Rc::clone(input)];
+
+    // Backward
+    if input.borrow().requires_grad {
+        let input_clone = Rc::clone(input);
+        let arg_h_cl = arg_h.clone();
+        let arg_w_cl = arg_w.clone();
+
+        result.borrow_mut().grad_fn = Some(Rc::new(RefCell::new(move |out: &mut Tensor| {
+            let grad_y = out.grad.as_ref().unwrap().clone().into_dimensionality::<Ix4>().unwrap();
+
+            // Init grad on input if needed
+            if input_clone.borrow().grad.is_none() {
+                let shape = input_clone.borrow().data.raw_dim();
+                input_clone.borrow_mut().grad = Some(ArrayD::zeros(shape));
+            }
+
+            // Accumulate into padded grad buffer, then unpad
+            let x_data = input_clone.borrow().data.clone().into_dimensionality::<Ix4>().unwrap();
+            let (n, c, h, w) = (x_data.shape()[0], x_data.shape()[1], x_data.shape()[2], x_data.shape()[3]);
+
+            let h_out = grad_y.shape()[2];
+            let w_out = grad_y.shape()[3];
+
+            let mut grad_x_padded = Array4::<f64>::zeros((n, c, h + 2 * padding, w + 2 * padding));
+
+            for b in 0..n {
+                for ch in 0..c {
+                    for i in 0..h_out {
+                        for j in 0..w_out {
+                            let h_start = i * stride;
+                            let w_start = j * stride;
+
+                            let hi = arg_h_cl[[b, ch, i, j]];
+                            let wi = arg_w_cl[[b, ch, i, j]];
+                            let gy = grad_y[[b, ch, i, j]];
+
+                            grad_x_padded[[b, ch, h_start + hi, w_start + wi]] += gy;
+                        }
+                    }
+                }
+            }
+
+            // Remove padding and add to input.grad
+            let grad_x = grad_x_padded.slice(s![.., .., padding..padding + h, padding..padding + w]).to_owned();
+            *input_clone.borrow_mut().grad.as_mut().unwrap() += &grad_x.into_dyn();
+        })));
+    }
+
+    result
+}
+
+// Flatten
+pub fn flatten(input: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+    // Original shape
+    let in_shape = input.borrow().data.shape().to_vec();
+    assert!(in_shape.len() >= 2, "Flatten expects at least 2 dimensions (N, …)");
+
+    let batch = in_shape[0];
+    let rest: usize = in_shape[1..].iter().product();
+
+    // Forward: reshape
+    let x = input.borrow().data.clone();
+    let y = x.into_shape_with_order(IxDyn(&[batch, rest])).unwrap();
+
+    let result = Rc::new(RefCell::new(Tensor::new(y, true)));
+    result.borrow_mut().parents = vec![Rc::clone(input)];
+
+    // Backward
+    if input.borrow().requires_grad {
+        let input_clone = Rc::clone(input);
+        let orig_shape = in_shape.clone();
+
+        result.borrow_mut().grad_fn = Some(Rc::new(RefCell::new(move |out: &mut Tensor| {
+            let grad_y = out.grad.as_ref().unwrap().clone();
+
+            // Reshape grad back to original input shape
+            let grad_x = grad_y.into_shape_with_order(IxDyn(&orig_shape)).unwrap();
+
+            if input_clone.borrow().grad.is_none() {
+                input_clone.borrow_mut().grad = Some(ArrayD::zeros(IxDyn(&orig_shape)));
+            }
+            *input_clone.borrow_mut().grad.as_mut().unwrap() += &grad_x;
         })));
     }
 
