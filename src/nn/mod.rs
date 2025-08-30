@@ -2,7 +2,7 @@ use std::{any::Any, cell::RefCell, rc::Rc};
 
 use ndarray::{ArrayD, Axis};
 
-use crate::{init::{InitType, Initializable}, tensor::{add, matmul, relu, sigmoid, tanh, Tensor}};
+use crate::{init::{InitType, Initializable}, tensor::{add, conv2d, matmul, relu, sigmoid, tanh, Tensor}};
 
 pub trait Module {
     fn forward(&self, input: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>>;
@@ -152,6 +152,45 @@ impl Module for Linear {
     fn forward(&self, x: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
         let wx = matmul(&x, &self.weights);
         add(&wx, &self.bias)
+    }
+
+    fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {
+        vec![Rc::clone(&self.weights), Rc::clone(&self.bias)]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+// ======
+// Conv2d
+// ======
+
+pub struct Conv2d {
+    pub weights: Rc<RefCell<Tensor>>,
+    pub bias: Rc<RefCell<Tensor>>,
+    kernel_size: usize,
+    stride: usize,
+    padding: usize
+}
+
+impl Conv2d {
+    pub fn new(in_channels: usize, out_channels: usize, kernel_size: usize, stride: usize, padding: usize) -> Self {
+        let weights = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![out_channels, in_channels], 0.01), true)));
+        let bias = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![1, out_channels], 0.0), true)));
+
+        Conv2d { weights, bias, kernel_size, stride, padding }
+    }
+}
+
+impl Module for Conv2d {
+    fn forward(&self, x: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+        conv2d(&x, &self.weights, Some(&self.bias), self.stride, self.padding)
     }
 
     fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {

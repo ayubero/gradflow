@@ -188,8 +188,8 @@ pub fn matmul(a: &Rc<RefCell<Tensor>>, b: &Rc<RefCell<Tensor>>) -> Rc<RefCell<Te
 
 // Convolution 2d
 pub fn conv2d(
-    input: &Rc<RefCell<Tensor>>,   // (N, C_in, H, W)
-    weight: &Rc<RefCell<Tensor>>,  // (C_out, C_in, kH, kW)
+    input: &Rc<RefCell<Tensor>>, // (N, C_in, H, W)
+    weight: &Rc<RefCell<Tensor>>, // (C_out, C_in, kH, kW)
     bias: Option<&Rc<RefCell<Tensor>>>, // (C_out)
     stride: usize,
     padding: usize,
@@ -476,22 +476,13 @@ pub fn cross_entropy_loss(
         let target_clone = Rc::clone(target);
 
         result.borrow_mut().grad_fn = Some(Rc::new(RefCell::new(move |_: &mut Tensor| {
-            let logits = pred_clone
-                .borrow()
-                .data
-                .clone()
-                .into_dimensionality::<Ix2>()
-                .expect("pred is not 2D");
-            let y_target = target_clone
-                .borrow()
-                .data
-                .clone()
-                .into_dimensionality::<Ix2>()
-                .expect("target is not 2D");
+            let logits = pred_clone.borrow().data.clone().into_dimensionality::<Ix2>().expect("pred is not 2D");
+            let y_target = target_clone.borrow().data.clone().into_dimensionality::<Ix2>().expect("target is not 2D");
 
             // Recompute softmax
-            let max_per_row =
-                logits.map_axis(Axis(1), |row| row.fold(f64::NEG_INFINITY, |a, &b| a.max(b)));
+            let max_per_row = logits.map_axis(
+                Axis(1), |row| row.fold(f64::NEG_INFINITY, |a, &b| a.max(b))
+            );
             let max_per_row = max_per_row.insert_axis(Axis(1));
             let exp_shifted = (&logits - &max_per_row).mapv(|v| v.exp());
             let sum_exp = exp_shifted.sum_axis(Axis(1)).insert_axis(Axis(1));
