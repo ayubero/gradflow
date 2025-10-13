@@ -1,8 +1,13 @@
+use std::ffi::CString;
 use std::{cell::RefCell, collections::HashSet};
 use std::rc::Rc;
-use std::ops::AddAssign;
-use ndarray::{s, Array2, Array4, ArrayD, Axis, Ix1, Ix2, Ix4, IxDyn};
+use ndarray::{s, Array, Array1, Array2, Array4, ArrayD, Axis, Ix1, Ix2, Ix4, IxDyn};
+//use rayon::iter::IntoParallelIterator;
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rustacuda::memory::DeviceBox;
 use std::f64::EPSILON; // To avoid log(0)
+use rustacuda::{prelude::*, stream, memory::DeviceBuffer};
+use rustacuda::launch;
 
 #[derive(Clone)]
 pub struct Tensor {
@@ -194,8 +199,33 @@ pub fn conv2d(
     stride: usize,
     padding: usize,
 ) -> Rc<RefCell<Tensor>> {
-    let x = input.borrow().data.clone().into_dimensionality::<Ix4>().unwrap();
+    //println!("Input shape: {:?}", input.borrow().data.shape());
+    /*let x = input.borrow().data.clone().into_dimensionality::<Ix4>().unwrap();
     let w = weight.borrow().data.clone().into_dimensionality::<Ix4>().unwrap();
+    let (n, c_in, h, w_in) = (x.shape()[0], x.shape()[1], x.shape()[2], x.shape()[3]);
+    let (c_out, _, k_h, k_w) = (w.shape()[0], w.shape()[1], w.shape()[2], w.shape()[3]);*/
+    let x = input
+        .borrow()
+        .data
+        .clone()
+        .into_dimensionality::<Ix4>()
+        .unwrap(); // (N, C_in, H, W)
+    let w = weight
+        .borrow()
+        .data
+        .clone()
+        .into_dimensionality::<Ix4>()
+        .unwrap(); // (C_out, C_in, kH, kW)
+
+    // Convert bias into an owned 1-D array if present
+    let bias_vec = bias.map(|b| {
+        b.borrow()
+            .data
+            .clone()
+            .into_dimensionality::<Ix1>()
+            .unwrap()
+    }).unwrap();
+
     let (n, c_in, h, w_in) = (x.shape()[0], x.shape()[1], x.shape()[2], x.shape()[3]);
     let (c_out, _, k_h, k_w) = (w.shape()[0], w.shape()[1], w.shape()[2], w.shape()[3]);
 
@@ -211,29 +241,134 @@ pub fn conv2d(
 
     // Forward
     let mut y = Array4::<f64>::zeros((n, c_out, h_out, w_out));
-    for b in 0..n {
-        for oc in 0..c_out {
-            for i in 0..h_out {
-                for j in 0..w_out {
-                    let h_start = i * stride;
-                    let w_start = j * stride;
-                    let patch = x_padded.slice(s![b, .., h_start..h_start + k_h, w_start..w_start + k_w]);
-                    let val = (patch.to_owned() * w.slice(s![oc, .., .., ..]).to_owned()).sum();
-                    y[[b, oc, i, j]] = val;
+    // Parallelize over (batch, out_channels)
+    /*y.axis_iter_mut(Axis(0))
+        .into_par_iter() // Rayon parallel iterator over batches
+        .enumerate()
+        .for_each(|(b, mut batch)| {
+            // `batch` is the view y[b, .., .., ..] (type: AxisIterMut along Axis(0) of shape (C_out, h_out, w_out))
+            for oc in 0..c_out {
+                // Get mutable view of the output channel plane for this batch
+                // Note: `index_axis_mut` borrows `batch` mutably for just this oc, so safe
+                let mut out_ch = batch.index_axis_mut(Axis(0), oc);
+
+                for i in 0..h_out {
+                    for j in 0..w_out {
+                        let h_start = i * stride;
+                        let w_start = j * stride;
+
+                        // Patch: shape (C_in, k_h, k_w)
+                        let patch = x_padded.slice(s![
+                            b,
+                            ..,
+                            h_start..h_start + k_h,
+                            w_start..w_start + k_w
+                        ]);
+
+                        // Element-wise multiply and sum
+                        let val = (&patch.to_owned()
+                            * &w.slice(s![oc, .., .., ..]).to_owned())
+                            .sum();
+
+                        // Add bias if present
+                        let bias_val = bias_vec
+                            .as_ref()
+                            .map_or(0.0, |bv| bv[oc]);
+
+                        out_ch[[i, j]] = val + bias_val;
+                    }
                 }
             }
-        }
+        });*/
+
+    // Initialize CUDA
+    rustacuda::init(CudaFlags::empty());
+    let device = Device::get_device(0).unwrap();
+    let _ctx = Context::create_and_push(ContextFlags::MAP_HOST | ContextFlags::SCHED_AUTO, device);
+
+    // Load PTX module
+    let ptx = include_str!("kernels.ptx");
+    let module = Module::load_from_string(&CString::new(ptx).unwrap()).unwrap();
+    let conv2d_kernel = module.get_function(&CString::new("conv2d_kernel").unwrap()).unwrap();
+
+    // Flatten your ndarray arrays
+    let x_padded_flat = x_padded.as_slice().unwrap();
+    let w_flat = w.as_slice().unwrap();
+    let bias_flat = bias.as_ref().map(|b| bias_vec.as_slice()).unwrap();
+    let mut y_flat = vec![0.0; y.len()];
+
+    // Allocate device buffers
+    let mut x_padded_dev = DeviceBuffer::from_slice(&x_padded_flat).expect("Failed to allocate x_padded");
+    let mut w_dev = DeviceBuffer::from_slice(&w_flat).expect("Failed to allocate w");
+    let mut bias_dev = DeviceBuffer::from_slice(bias_flat.unwrap_or(&[0.0])).expect("Failed to allocate bias");
+    let mut y_dev = DeviceBuffer::from_slice(&y_flat).expect("Failed to allocate y");
+
+    // Compute grid and block dimensions
+    let b: usize = bias_flat.unwrap().len(); 
+    let block = (1u32, 1u32, 1u32);
+    let grid = (
+        (c_out as u32 + block.0 - 1) / block.0,
+        (h_out as u32 + block.1 - 1) / block.1,
+        (w_out as u32 * b as u32 + block.2 - 1) / block.2,
+    );
+
+    // Padded dimensions
+    let h_padded = h + 2 * padding;
+    let w_padded = w_in + 2 * padding;
+
+    // Strides for x_padded
+    let x_padded_stride_w = 1;
+    let x_padded_stride_h = w_padded;
+    let x_padded_stride_c = h_padded * w_padded;
+    let x_padded_stride_b = c_in * h_padded * w_padded;
+
+    // Strides for w
+    let w_stride_w = 1;
+    let w_stride_h = k_w;
+    let w_stride_ic = k_h * k_w;
+    let w_stride_oc = c_in * k_h * k_w;
+
+    // Strides for y
+    let y_stride_w = 1;
+    let y_stride_h = w_out;
+    let y_stride_oc = h_out * w_out;
+    let y_stride_b = c_out * h_out * w_out;
+
+    // Launch the kernel
+    let stream = stream::Stream::new(stream::StreamFlags::NON_BLOCKING, None).unwrap();
+    unsafe {
+        launch!(conv2d_kernel<<<grid, block, 0, stream>>>(
+            x_padded_dev.as_device_ptr(),
+            w_dev.as_device_ptr(),
+            bias_dev.as_device_ptr(),
+            y_dev.as_device_ptr(),
+            b, c_out, h_out, w_out,
+            c_in, k_h, k_w,
+            stride,
+            x_padded_stride_h, x_padded_stride_w,
+            w_stride_oc, w_stride_ic, w_stride_h, w_stride_w,
+            y_stride_b, y_stride_oc, y_stride_h, y_stride_w
+        ))
+        .expect("Failed to launch kernel");
     }
 
+    // Copy result back to host
+    y_dev.copy_to(&mut y_flat).expect("Failed to copy result back");
+
+    // Reshape the result back to the original shape if needed
+    let y_result = Array::from_shape_vec(y.shape(), y_flat).expect("Failed to reshape result");
+
+    //Rc::new(RefCell::new(Tensor { data: y.into_dyn() }))
+
     // Add bias if provided
-    if let Some(bias_tensor) = bias {
+    /*if let Some(bias_tensor) = bias {
         let b_data = bias_tensor.borrow().data.clone().into_dimensionality::<Ix1>().unwrap();
         for oc in 0..c_out {
             y.slice_mut(s![.., oc, .., ..]).add_assign(b_data[oc]);
         }
-    }
+    }*/
 
-    let result = Rc::new(RefCell::new(Tensor::new(y.into_dyn(), true)));
+    let result = Rc::new(RefCell::new(Tensor::new(y_result.into_dyn(), true)));
     let mut parents = vec![Rc::clone(input), Rc::clone(weight)];
     if let Some(bias_tensor) = bias {
         parents.push(Rc::clone(bias_tensor));

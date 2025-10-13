@@ -1,8 +1,8 @@
 use std::{any::Any, cell::RefCell, rc::Rc};
-
 use ndarray::{ArrayD, Axis};
+use rayon::prelude::*;
 
-use crate::{init::{InitType, Initializable}, tensor::{add, conv2d, matmul, relu, sigmoid, tanh, Tensor}};
+use crate::{init::{InitType, Initializable}, tensor::{add, conv2d, flatten, matmul, maxpool2d, relu, sigmoid, tanh, Tensor}};
 
 pub trait Module {
     fn forward(&self, input: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>>;
@@ -34,6 +34,8 @@ impl Sequential {
     pub fn apply_init(&mut self, init: InitType) {
         for layer in self.layers.iter_mut() {
             if let Some(l) = layer.as_any_mut().downcast_mut::<Linear>() {
+                l.reset_parameters(&init);
+            } else if let Some(l) = layer.as_any_mut().downcast_mut::<Conv2d>() {
                 l.reset_parameters(&init);
             }
         }
@@ -174,17 +176,16 @@ impl Module for Linear {
 pub struct Conv2d {
     pub weights: Rc<RefCell<Tensor>>,
     pub bias: Rc<RefCell<Tensor>>,
-    kernel_size: usize,
     stride: usize,
     padding: usize
 }
 
 impl Conv2d {
     pub fn new(in_channels: usize, out_channels: usize, kernel_size: usize, stride: usize, padding: usize) -> Self {
-        let weights = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![out_channels, in_channels], 0.01), true)));
-        let bias = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![1, out_channels], 0.0), true)));
+        let weights = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![out_channels, in_channels, kernel_size, kernel_size], 0.01), true)));
+        let bias = Rc::new(RefCell::new(Tensor::new(ArrayD::from_elem(vec![out_channels], 0.0), true)));
 
-        Conv2d { weights, bias, kernel_size, stride, padding }
+        Conv2d { weights, bias, stride, padding }
     }
 }
 
@@ -195,6 +196,72 @@ impl Module for Conv2d {
 
     fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {
         vec![Rc::clone(&self.weights), Rc::clone(&self.bias)]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+// =========
+// MaxPool2d
+// =========
+
+pub struct MaxPool2d {
+    kernel_size: usize,
+    stride: usize,
+    padding: usize
+}
+
+impl MaxPool2d {
+    pub fn new(kernel_size: usize, stride: Option<usize>, padding: usize) -> Self {
+        //let stride
+        let stride = stride.unwrap_or(1);
+        MaxPool2d { kernel_size, stride, padding }
+    }
+}
+
+impl Module for MaxPool2d {
+    fn forward(&self, input: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+        maxpool2d(&input, self.kernel_size, self.kernel_size, self.stride, self.padding)
+    }
+
+    fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {
+        vec![]
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+// =======
+// Flatten
+// =======
+
+pub struct Flatten {}
+
+impl Flatten {
+    pub fn new() -> Self {
+        Flatten {}
+    }
+}
+
+impl Module for Flatten {
+    fn forward(&self, input: Rc<RefCell<Tensor>>) -> Rc<RefCell<Tensor>> {
+        flatten(&input)
+    }
+
+    fn parameters(&self) -> Vec<Rc<RefCell<Tensor>>> {
+        vec![]
     }
 
     fn as_any(&self) -> &dyn Any {
